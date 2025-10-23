@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+{% block title %}{{ ruleset.name }} · Commission Rules · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h4 mb-1">{{ ruleset.name }}</h1>
+    <p class="text-muted small mb-0">Version {{ ruleset.version }} · Effective {{ ruleset.effective_from.strftime('%b %d, %Y') if ruleset.effective_from else 'TBD' }}</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.index') }}">Back to admin</a>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Add rule</h2>
+      </div>
+      <div class="card-body">
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label">Line of business</label>
+            <input type="text" name="lob" class="form-control" placeholder="Commercial Auto">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Basis</label>
+            <select name="basis" class="form-select">
+              <option value="gross_commission">% of gross commission</option>
+              <option value="premium">% of premium</option>
+              <option value="flat">Flat amount</option>
+            </select>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Rate (%)</label>
+              <input type="number" step="0.01" name="rate" class="form-control" placeholder="25">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Flat amount ($)</label>
+              <input type="number" step="0.01" name="flat_amount" class="form-control" placeholder="0">
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
+            <div class="col-md-6">
+              <label class="form-label">New/Renewal</label>
+              <select name="new_vs_renewal" class="form-select">
+                <option value="any">Any</option>
+                <option value="new">New business</option>
+                <option value="renewal">Renewal</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Priority</label>
+              <input type="number" name="priority" class="form-control" value="0">
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary mt-3">Add rule</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Existing rules</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>LOB</th>
+              <th>Basis</th>
+              <th>Rate</th>
+              <th>Flat</th>
+              <th>New/Renewal</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rule in rules %}
+            <tr>
+              <td>{{ rule.priority }}</td>
+              <td>{{ rule.match_fields.lob or 'Any' }}</td>
+              <td>{{ rule.basis.replace('_', ' ')|title }}</td>
+              <td>{{ rule.rate or '—' }}</td>
+              <td>{{ rule.flat_amount or '—' }}</td>
+              <td>{{ rule.new_vs_renewal|capitalize }}</td>
+              <td class="text-end">
+                <form method="post" action="{{ url_for('admin.delete_rule', rule_id=rule.id) }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-4">No rules yet. Add a rule to automate producer payouts.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
