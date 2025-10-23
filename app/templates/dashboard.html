@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="row g-4">
+  <div class="col-xl-4 col-md-6">
+    <div class="card stat-card shadow-sm">
+      <div class="card-body">
+        <span class="badge bg-primary-soft text-primary">Commission activity</span>
+        <h2 class="display-6 fw-semibold mt-2">{{ txns_total }}</h2>
+        <p class="text-muted mb-0">Commission transactions tracked</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4 col-md-6">
+    <div class="card stat-card shadow-sm">
+      <div class="card-body">
+        <span class="badge bg-success-soft text-success">Imports</span>
+        <h2 class="display-6 fw-semibold mt-2">{{ imports|length }}</h2>
+        <p class="text-muted mb-0">Recent carrier statements processed</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4 col-md-12">
+    <div class="card stat-card shadow-sm">
+      <div class="card-body">
+        <span class="badge bg-warning-soft text-warning">Audit</span>
+        <h2 class="display-6 fw-semibold mt-2">{{ audit_events|length }}</h2>
+        <p class="text-muted mb-0">Latest ledger and rule adjustments</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="mt-5">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="h5 mb-0">Recent imports</h2>
+    <a class="btn btn-sm btn-primary" href="{{ url_for('imports.index') }}">New import</a>
+  </div>
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Carrier</th>
+            <th>Period</th>
+            <th>Source</th>
+            <th>Status</th>
+            <th>Uploaded</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for batch in imports %}
+          <tr>
+            <td>{{ batch.carrier.name if batch.carrier else '—' }}</td>
+            <td>{{ batch.period_month }}</td>
+            <td>{{ batch.source_type|upper }}</td>
+            <td><span class="badge rounded-pill bg-info-soft text-info">{{ batch.status|capitalize }}</span></td>
+            <td>{{ batch.created_at.strftime('%b %d, %Y') if batch.created_at else '' }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-center text-muted py-4">No imports yet. <a href="{{ url_for('imports.index') }}">Upload your first statement.</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="mt-5">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="h5 mb-0">Audit trail</h2>
+    <span class="text-muted small">Immutable logs for compliance</span>
+  </div>
+  <div class="card shadow-sm">
+    <div class="list-group list-group-flush">
+      {% for event in audit_events %}
+      <div class="list-group-item">
+        <div class="d-flex justify-content-between">
+          <div>
+            <strong>{{ event.action }}</strong>
+            <span class="text-muted">on {{ event.entity }} #{{ event.entity_id }}</span>
+          </div>
+          <span class="text-muted small">{{ event.ts.strftime('%b %d, %Y %H:%M') }}</span>
+        </div>
+        <p class="small text-muted mb-0">Performed by user ID {{ event.actor_user_id }}</p>
+      </div>
+      {% else %}
+      <div class="list-group-item text-center text-muted py-4">
+        Audit log will populate as you import, reconcile, and finalize months.
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

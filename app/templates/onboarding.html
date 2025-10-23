@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block title %}Onboarding · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-xl-8">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h1 class="h4">Get production-ready in four steps</h1>
+        <p class="text-muted">We’ll guide you from carrier mappings to commission-ready statements.</p>
+        <ol class="timeline mt-4">
+          <li>
+            <h2 class="h5">1. Add your carriers</h2>
+            <p class="text-muted mb-0">Upload a sample statement and map carrier columns once. TrackYourSheets remembers it monthly.</p>
+          </li>
+          <li>
+            <h2 class="h5">2. Teach us your producers</h2>
+            <p class="text-muted mb-0">Invite your team, assign producer splits, and configure house accounts.</p>
+          </li>
+          <li>
+            <h2 class="h5">3. Automate commission rules</h2>
+            <p class="text-muted mb-0">Versioned rulesets handle new vs. renewal logic, chargebacks, and E&S agency bill.</p>
+          </li>
+          <li>
+            <h2 class="h5">4. Finalize & export</h2>
+            <p class="text-muted mb-0">Review exceptions, finalize the ledger, and push payouts to your producers or QuickBooks.</p>
+          </li>
+        </ol>
+        <div class="d-flex gap-3 mt-4">
+          <a class="btn btn-primary" href="{{ url_for('imports.index') }}">Upload your first statement</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('admin.index') }}">Open admin console</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
