@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Admin Console · TrackYourSheets{% endblock %}
 {% block content %}
+{% set agent_users = users | selectattr('role', 'equalto', 'agent') | list %}
 <div class="row g-4">
   <div class="col-xl-4">
     <div class="card shadow-sm h-100">
@@ -9,14 +10,17 @@
       </div>
       <div class="card-body">
         <h3 class="h5 mb-1">{{ org.name }}</h3>
-        <p class="text-muted small mb-3">Plan: {{ org.plan.name if org.plan else 'Unassigned' }}</p>
-        <form method="post" action="#" class="mb-3">
-          <div class="alert alert-info small">Billing plan changes are handled via Stripe Customer Portal integration.</div>
-        </form>
+        {% if org.plan %}
+        <p class="text-muted small mb-3">Plan: {{ org.plan.name }}</p>
+        {% else %}
+        <p class="text-muted small mb-3">Plan: <span class="text-warning">Not set</span></p>
+        {% endif %}
         <h4 class="h6 text-uppercase text-muted mt-4">Usage</h4>
-        <ul class="list-unstyled small">
-          <li><strong>{{ users|length }}</strong> users</li>
-          <li><strong>{{ carriers|length }}</strong> carriers</li>
+        <ul class="list-unstyled small mb-0">
+          <li><strong>{{ users|length }}</strong> team member{{ '' if users|length == 1 else 's' }}</li>
+          <li><strong>{{ workspaces|length }}</strong> workspace{{ '' if workspaces|length == 1 else 's' }}</li>
+          <li><strong>{{ producers|length }}</strong> producer{{ '' if producers|length == 1 else 's' }}</li>
+          <li><strong>{{ carriers|length }}</strong> carrier{{ '' if carriers|length == 1 else 's' }}</li>
         </ul>
       </div>
     </div>
@@ -24,15 +28,62 @@
   <div class="col-xl-4">
     <div class="card shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
-        <h2 class="h6 mb-0">Team</h2>
-        <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#inviteUserModal">Invite</button>
+        <h2 class="h6 mb-0">Workspaces</h2>
+        {% if current_user.role in ['owner', 'admin'] %}
+        <div class="btn-group">
+          <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#createWorkspaceModal">New workspace</button>
+          <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#createOfficeModal">New office</button>
+        </div>
+        {% endif %}
+      </div>
+      <div class="list-group list-group-flush">
+        {% for workspace in workspaces %}
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between align-items-start gap-3">
+            <div>
+              <div class="fw-semibold">{{ workspace.name }}</div>
+              <div class="small text-muted">
+                {% if workspace.office %}{{ workspace.office.name }} · {% endif %}
+                {% if workspace.agent %}Agent: {{ workspace.agent.email }}{% else %}No agent assigned{% endif %}
+              </div>
+              <div class="small text-muted">{{ workspace.producers|length }} producer{{ '' if workspace.producers|length == 1 else 's' }}</div>
+            </div>
+            {% if current_user.role in ['owner', 'admin'] and agent_users %}
+            <form class="d-flex gap-2" method="post" action="{{ url_for('admin.assign_workspace_agent', workspace_id=workspace.id) }}">
+              <select name="agent_user_id" class="form-select form-select-sm">
+                <option value="">Assign agent</option>
+                {% for agent in agent_users %}
+                <option value="{{ agent.id }}" {% if workspace.agent_id == agent.id %}selected{% endif %}>{{ agent.email }}</option>
+                {% endfor %}
+              </select>
+              <button class="btn btn-sm btn-outline-primary">Save</button>
+            </form>
+            {% elif current_user.role == 'agent' and workspace.agent_id == current_user.id %}
+            <span class="badge bg-success-soft text-success">Managed</span>
+            {% endif %}
+          </div>
+        </div>
+        {% else %}
+        <div class="list-group-item text-center text-muted">No workspaces yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">{{ 'Producers' if current_user.role == 'agent' else 'Team' }}</h2>
+        <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#inviteUserModal">{{ 'Add producer' if current_user.role == 'agent' else 'Invite' }}</button>
       </div>
       <div class="list-group list-group-flush">
         {% for user in users %}
         <div class="list-group-item d-flex justify-content-between align-items-center">
           <div>
             <div class="fw-semibold">{{ user.email }}</div>
-            <div class="text-muted small">{{ user.role|capitalize }}</div>
+            <div class="text-muted small">
+              {{ user.role|capitalize }}
+              {% if user.managed_workspace %} · Agent of {{ user.managed_workspace.name }}{% elif user.producer %} · Producer in {{ user.producer.workspace.name }}{% endif %}
+            </div>
           </div>
           {% if user.id != current_user.id %}
           <form method="post" action="{{ url_for('admin.delete_user', user_id=user.id) }}">
@@ -46,7 +97,32 @@
       </div>
     </div>
   </div>
-  <div class="col-xl-4">
+</div>
+
+<div class="row g-4 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Producers</h2>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for producer in producers %}
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <div class="fw-semibold">{{ producer.display_name }}</div>
+              <div class="text-muted small">{{ producer.workspace.name if producer.workspace else 'Unassigned workspace' }}</div>
+            </div>
+            <span class="badge bg-secondary">Split {{ producer.default_split }}%</span>
+          </div>
+        </div>
+        {% else %}
+        <div class="list-group-item text-center text-muted">Producers appear here after you invite them to a workspace.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-6">
     <div class="card shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h2 class="h6 mb-0">Carriers</h2>
@@ -68,7 +144,7 @@
 
 <div class="row g-4 mt-1">
   <div class="col-xl-6">
-    <div class="card shadow-sm">
+    <div class="card shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h2 class="h6 mb-0">Commission rulesets</h2>
         <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createRulesetModal">New ruleset</button>
@@ -89,12 +165,15 @@
     </div>
   </div>
   <div class="col-xl-6">
-    <div class="card shadow-sm">
+    <div class="card shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h2 class="h6 mb-0">API keys</h2>
+        {% if current_user.role in ['owner', 'admin'] %}
         <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#createApiKeyModal">Generate</button>
+        {% endif %}
       </div>
       <div class="list-group list-group-flush">
+        {% if api_keys %}
         {% for key in api_keys %}
         <div class="list-group-item">
           <div class="d-flex justify-content-between align-items-center">
@@ -105,9 +184,12 @@
             <span class="badge bg-secondary">Token stored securely</span>
           </div>
         </div>
-        {% else %}
-        <div class="list-group-item text-center text-muted">No API keys yet. Enable webhooks or integrations to generate one.</div>
         {% endfor %}
+        {% elif current_user.role in ['owner', 'admin'] %}
+        <div class="list-group-item text-center text-muted">Generate keys to connect Zapier, QuickBooks syncs, or partner APIs.</div>
+        {% else %}
+        <div class="list-group-item text-center text-muted">Available for organization owners via the Stripe Scale plan.</div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -119,7 +201,7 @@
     <div class="modal-content">
       <form method="post" action="{{ url_for('admin.create_user') }}">
         <div class="modal-header">
-          <h5 class="modal-title">Invite teammate</h5>
+          <h5 class="modal-title">{{ 'Add producer' if current_user.role == 'agent' else 'Invite teammate' }}</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
@@ -127,20 +209,115 @@
             <label class="form-label">Email</label>
             <input type="email" name="email" class="form-control" required>
           </div>
+          {% if current_user.role in ['owner', 'admin'] %}
           <div class="mb-3">
             <label class="form-label">Role</label>
             <select name="role" class="form-select">
               <option value="admin">Admin</option>
+              <option value="agent">Agent</option>
               <option value="bookkeeper">Bookkeeper</option>
               <option value="producer">Producer</option>
               <option value="auditor">Read-only auditor</option>
             </select>
           </div>
-          <div class="alert alert-warning small mb-0">An activation email workflow can be connected via transactional email providers.</div>
+          {% else %}
+          <input type="hidden" name="role" value="producer">
+          {% endif %}
+          {% if workspaces %}
+          <div class="mb-3">
+            <label class="form-label">Workspace</label>
+            {% if current_user.role == 'agent' and workspaces|length == 1 %}
+            <input type="hidden" name="workspace_id" value="{{ workspaces[0].id }}">
+            <input type="text" class="form-control" value="{{ workspaces[0].name }}" disabled>
+            {% else %}
+            <select name="workspace_id" class="form-select">
+              <option value="">Select workspace (required for agents/producers)</option>
+              {% for workspace in workspaces %}
+              <option value="{{ workspace.id }}">{{ workspace.office.name ~ ' · ' if workspace.office }}{{ workspace.name }}</option>
+              {% endfor %}
+            </select>
+            {% endif %}
+          </div>
+          {% endif %}
+          <div class="mb-3">
+            <label class="form-label">Display name (for producers)</label>
+            <input type="text" name="display_name" class="form-control" placeholder="Jane Producer">
+          </div>
+          <div class="mb-0 alert alert-info small">Temporary password will default to <code>ChangeMe123!</code>. Update after first login.</div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Send invite</button>
+          <button type="submit" class="btn btn-primary">{{ 'Add producer' if current_user.role == 'agent' else 'Send invite' }}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Create Office Modal -->
+<div class="modal fade" id="createOfficeModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('admin.create_office') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">New office</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Office name</label>
+            <input type="text" name="name" class="form-control" placeholder="Austin HQ" required>
+          </div>
+          <div class="mb-0">
+            <label class="form-label">Timezone (optional)</label>
+            <input type="text" name="timezone" class="form-control" placeholder="America/Chicago">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create office</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Create Workspace Modal -->
+<div class="modal fade" id="createWorkspaceModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('admin.create_workspace') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">New workspace</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Workspace name</label>
+            <input type="text" name="name" class="form-control" placeholder="Austin · Commercial" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Office</label>
+            <select name="office_id" class="form-select" required>
+              <option value="" disabled selected>Select office</option>
+              {% for office in offices %}
+              <option value="{{ office.id }}">{{ office.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-0">
+            <label class="form-label">Agent (optional)</label>
+            <select name="agent_id" class="form-select">
+              <option value="">Assign later</option>
+              {% for agent in agent_users %}
+              <option value="{{ agent.id }}">{{ agent.email }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create workspace</button>
         </div>
       </form>
     </div>
@@ -161,7 +338,7 @@
             <label class="form-label">Carrier name</label>
             <input type="text" name="name" class="form-control" required>
           </div>
-          <div class="mb-3">
+          <div class="mb-0">
             <label class="form-label">Import format</label>
             <select name="download_type" class="form-select">
               <option value="csv">CSV</option>
@@ -215,9 +392,9 @@
         <div class="modal-body">
           <div class="mb-3">
             <label class="form-label">Label</label>
-            <input type="text" name="label" class="form-control" placeholder="Zapier outbound" required>
+            <input type="text" name="label" class="form-control" placeholder="Zapier Automation" required>
           </div>
-          <div class="alert alert-warning small mb-0">API keys are hashed at rest. Copy the plaintext token immediately after generating.</div>
+          <div class="alert alert-warning small mb-0">Tokens are generated as placeholders. Replace with secure storage before production use.</div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>

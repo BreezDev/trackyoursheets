@@ -4,18 +4,26 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h1 class="h4 mb-0">Carrier statement imports</h1>
-    <p class="text-muted small mb-0">Upload CSVs, reconcile unmatched policies, and move batches through your pipeline.</p>
+    <p class="text-muted small mb-0">Drop commission CSVs and we will auto-route rows by carrier into workspace queues.</p>
   </div>
-  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadModal">Upload statements</button>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadModal" {% if not workspaces %}disabled{% endif %}>Upload statements</button>
 </div>
+
+{% if not workspaces %}
+<div class="alert alert-warning">
+  <strong>No workspace access.</strong> Ask an administrator or agent to assign you to a workspace before uploading statements.
+</div>
+{% endif %}
 
 <div class="card shadow-sm">
   <div class="table-responsive">
     <table class="table align-middle mb-0">
       <thead class="table-light">
         <tr>
+          <th>Workspace</th>
           <th>Carrier</th>
           <th>Period</th>
+          <th>Rows</th>
           <th>Source</th>
           <th>Status</th>
           <th>Created</th>
@@ -24,8 +32,10 @@
       <tbody>
         {% for batch in batches %}
         <tr>
+          <td>{{ batch.workspace.name if batch.workspace else '—' }}</td>
           <td>{{ batch.carrier.name if batch.carrier else '—' }}</td>
           <td>{{ batch.period_month }}</td>
+          <td>{{ batch.rows|length }}</td>
           <td>{{ batch.source_type|upper }}</td>
           <td>
             <span class="badge rounded-pill bg-{{ 'success' if batch.status == 'finalized' else 'info' }}-soft text-{{ 'success' if batch.status == 'finalized' else 'info' }}">{{ batch.status|capitalize }}</span>
@@ -52,15 +62,19 @@
         </div>
         <div class="modal-body">
           <div class="row g-3">
+            {% if require_workspace_choice %}
             <div class="col-md-4">
-              <label class="form-label">Carrier</label>
-              <select name="carrier_id" class="form-select" required>
-                <option value="" disabled selected>Select carrier</option>
-                {% for carrier in carriers %}
-                <option value="{{ carrier.id }}">{{ carrier.name }}</option>
+              <label class="form-label">Workspace</label>
+              <select name="workspace_id" class="form-select" required>
+                <option value="" disabled selected>Select workspace</option>
+                {% for workspace in workspaces %}
+                <option value="{{ workspace.id }}">{{ workspace.office.name ~ ' · ' if workspace.office }}{{ workspace.name }}</option>
                 {% endfor %}
               </select>
             </div>
+            {% elif workspaces %}
+            <input type="hidden" name="workspace_id" value="{{ workspaces[0].id }}">
+            {% endif %}
             <div class="col-md-4">
               <label class="form-label">Statement period</label>
               <input type="month" name="period_month" class="form-control" required>
@@ -72,7 +86,7 @@
             <div class="col-12">
               <label class="form-label">Files</label>
               <input type="file" name="statement" class="form-control" accept=".csv" required>
-              <span class="small text-muted">Drag-and-drop coming soon. We validate duplicates by hash to avoid double posting.</span>
+              <span class="small text-muted">Include a <strong>carrier</strong> column and we will auto create carrier profiles and sort rows per workspace pipeline.</span>
             </div>
           </div>
         </div>

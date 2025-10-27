@@ -20,6 +20,8 @@ class Organization(TimestampMixin, db.Model):
     trial_ends_at = db.Column(db.DateTime)
 
     users = db.relationship("User", backref="organization", lazy=True)
+    offices = db.relationship("Office", backref="organization", lazy=True)
+    workspaces = db.relationship("Workspace", backref="organization", lazy=True)
     carriers = db.relationship("Carrier", backref="organization", lazy=True)
     producers = db.relationship("Producer", backref="organization", lazy=True)
     customers = db.relationship("Customer", backref="organization", lazy=True)
@@ -45,6 +47,33 @@ class SubscriptionPlan(db.Model):
     includes_api = db.Column(db.Boolean, default=False)
 
     organizations = db.relationship("Organization", backref="plan", lazy=True)
+
+
+class Office(TimestampMixin, db.Model):
+    __tablename__ = "offices"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    timezone = db.Column(db.String(64))
+
+    workspaces = db.relationship("Workspace", backref="office", lazy=True)
+
+
+class Workspace(TimestampMixin, db.Model):
+    __tablename__ = "workspaces"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    office_id = db.Column(db.Integer, db.ForeignKey("offices.id"), nullable=False)
+    agent_id = db.Column(db.Integer, db.ForeignKey("users.id"), unique=True)
+    name = db.Column(db.String(120), nullable=False)
+
+    agent = db.relationship(
+        "User",
+        backref=db.backref("managed_workspace", uselist=False),
+        foreign_keys=[agent_id],
+    )
 
 
 class User(UserMixin, TimestampMixin, db.Model):
@@ -93,11 +122,20 @@ class Producer(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"), nullable=False)
+    agent_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     display_name = db.Column(db.String(120), nullable=False)
     default_split = db.Column(db.Numeric(5, 2), nullable=False, default=100)
 
     commissions = db.relationship("CommissionTransaction", backref="producer", lazy=True)
     payout_statements = db.relationship("PayoutStatement", backref="producer", lazy=True)
+
+    workspace = db.relationship("Workspace", backref="producers")
+    agent = db.relationship(
+        "User",
+        backref="managed_producers",
+        foreign_keys=[agent_id],
+    )
 
 
 class Customer(TimestampMixin, db.Model):
@@ -163,6 +201,8 @@ class ImportBatch(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
     carrier_id = db.Column(db.Integer, db.ForeignKey("carriers.id"))
+    workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"), nullable=False)
+    producer_id = db.Column(db.Integer, db.ForeignKey("producers.id"))
     period_month = db.Column(db.String(7), nullable=False)
     source_type = db.Column(db.String(16), nullable=False)
     status = db.Column(db.String(32), nullable=False, default="uploaded")
@@ -171,6 +211,8 @@ class ImportBatch(TimestampMixin, db.Model):
 
     rows = db.relationship("ImportRow", backref="batch", lazy=True, cascade="all, delete-orphan")
     creator = db.relationship("User", backref="import_batches", foreign_keys=[created_by])
+    workspace = db.relationship("Workspace", backref="import_batches")
+    producer = db.relationship("Producer", backref="imports", foreign_keys=[producer_id])
 
 
 class ImportRow(TimestampMixin, db.Model):
@@ -198,6 +240,7 @@ class CommissionTransaction(TimestampMixin, db.Model):
     policy_id = db.Column(db.Integer, db.ForeignKey("policies.id"))
     producer_id = db.Column(db.Integer, db.ForeignKey("producers.id"))
     batch_id = db.Column(db.Integer, db.ForeignKey("import_batches.id"))
+    workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"))
     txn_date = db.Column(db.Date, nullable=False)
     premium = db.Column(db.Numeric(12, 2))
     commission = db.Column(db.Numeric(12, 2))
@@ -207,6 +250,7 @@ class CommissionTransaction(TimestampMixin, db.Model):
     status = db.Column(db.String(32), default="provisional")
 
     batch = db.relationship("ImportBatch", backref="commission_transactions", foreign_keys=[batch_id])
+    workspace = db.relationship("Workspace", backref="commission_transactions", foreign_keys=[workspace_id])
 
 
 class PayoutStatement(TimestampMixin, db.Model):
@@ -215,6 +259,7 @@ class PayoutStatement(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
     producer_id = db.Column(db.Integer, db.ForeignKey("producers.id"))
+    workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"))
     period = db.Column(db.String(7), nullable=False)
     totals = db.Column(db.JSON)
     pdf_path = db.Column(db.String(255))
@@ -222,6 +267,7 @@ class PayoutStatement(TimestampMixin, db.Model):
     finalized_at = db.Column(db.DateTime)
 
     finalizer = db.relationship("User", backref="finalized_statements", foreign_keys=[finalized_by])
+    workspace = db.relationship("Workspace", backref="payout_statements", foreign_keys=[workspace_id])
 
 
 class ESAgencyBill(TimestampMixin, db.Model):

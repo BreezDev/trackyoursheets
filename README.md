@@ -9,7 +9,10 @@ TrackYourSheets is a Flask-powered commissions CRM tailored for independent insu
 - **Commission engine** – Configure per-carrier rulesets with support for new vs. renewal logic, flat amounts, and priority weighting.
 - **Reconciliation pipeline** – Track batches through import → review → finalisation stages with full audit history scaffolding.
 - **Payouts & analytics** – Generate producer statements, carrier mix analytics, and import health snapshots.
-- **Admin controls** – Manage organisations, users, carriers, rules, and API tokens with role-based access.
+- **Workspace hierarchy** – Model offices, workspaces, agents, and producers with fine-grained role controls.
+- **Auto carrier detection** – Ingest CSVs with a `carrier` column and automatically split rows into carrier-specific batches.
+- **Admin controls** – Manage organisations, users, carriers, rules, API tokens, and workspace assignments with role-based access.
+- **Email notifications** – Send import summaries via Nylas when producers upload fresh statements.
 
 ## Project structure
 
@@ -22,6 +25,8 @@ app/
   admin.py           # Admin console blueprint
   imports.py         # Import pipeline (CSV upload, row persistence)
   reports.py         # Analytics & payout views
+  workspaces.py      # Helper functions for workspace access control
+  nylas_email.py     # Nylas integration helpers for email notifications
   templates/         # Jinja2 templates (Bootstrap 5 + custom design)
   static/css/        # Custom styles
 app.py               # Entrypoint for WSGI/Flask CLI
@@ -58,6 +63,7 @@ admin.md             # Admin console operations guide
 
    - Visit `http://127.0.0.1:5000/signup`.
    - Choose a seeded plan, provide your agency details, and you’ll be redirected to onboarding.
+   - From the admin console, create an office, add a workspace, and assign an agent before inviting producers.
 
 ## Deploying on PythonAnywhere
 
@@ -66,6 +72,7 @@ admin.md             # Admin console operations guide
 3. **Configure environment variables** in the PythonAnywhere dashboard:
    - `SECRET_KEY` – strong random string.
    - `DATABASE_URL` (optional) – defaults to SQLite (`sqlite:///trackyoursheets.db`). For PythonAnywhere MySQL, supply `mysql+mysqlclient://user:password@host/dbname`.
+   - `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, `NYLAS_FROM_EMAIL` – required to send import notifications through Nylas.
 4. **Run the seed command** once:
 
    ```bash

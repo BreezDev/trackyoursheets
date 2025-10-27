@@ -4,25 +4,31 @@ The admin console centralises every organisation-level configuration task. This 
 
 ## Access & roles
 
-- Only users with the **Owner** or **Admin** role can access `/admin`.
-- Owners are created during signup. Promote additional admins from the Team card.
-- Producers, bookkeepers, and read-only auditors see their scoped dashboards but cannot view the admin console.
+- Owners, admins, and workspace agents can access `/admin`.
+- Owners are created during signup. Promote additional admins or agents from the Team card.
+- Agents manage a single workspace (and the producers within it). Producers, bookkeepers, and read-only auditors stay within their scoped dashboards.
 
 ## Organisation overview
 
 The landing card summarises your plan, usage, and quick stats. Billing plan changes are performed via Stripe’s Customer Portal once Stripe integration is connected. Until then, updates can be made manually through the database.
 
+## Workspace management
+
+1. Use **New office** to register each physical or virtual office your agency operates.
+2. Create a **New workspace** for every line of business or producer pod and optionally assign an agent user.
+3. Agents see only the workspaces they manage; owners/admins can reassign agents at any time using the workspace list dropdown.
+
 ## Team management
 
 1. Click **Invite** to open the teammate modal.
-2. Provide an email, assign a role, and submit. New users receive a temporary password (`ChangeMe123!`) and should be prompted to update it on first login.
-3. Remove a user via the list’s **Remove** button (you can’t delete your own account).
+2. Provide an email and assign a role. When inviting agents or producers, pick the workspace they should manage or operate in. New users receive a temporary password (`ChangeMe123!`) and should update it on first login.
+3. Remove a user via the list’s **Remove** button (you can’t delete your own account). Removing an agent releases their workspace so another agent can be assigned.
 
 ## Carrier catalogue
 
-- Use **Add** to register each carrier your agency works with.
+- Use **Add** to register each carrier your agency works with. Producers can also trigger automatic carrier creation by uploading CSVs with a `carrier` column.
 - Select the download type: CSV (supported) or PDF (for future OCR workflow).
-- Carriers appear in import drop-downs and can be mapped to rulesets.
+- Carriers appear in analytics and can be mapped to rulesets.
 
 ## Commission rulesets
 
@@ -43,9 +49,15 @@ The landing card summarises your plan, usage, and quick stats. Billing plan chan
 
 Although managed on `/imports`, admins should periodically:
 
-- Confirm each carrier has an accurate column mapping.
+- Confirm each carrier has an accurate column mapping (auto-created carriers can be renamed from this panel).
 - Monitor batch statuses (`uploaded`, `imported`, `finalized`).
 - Review audit logs on the dashboard for any anomalies.
+- Ensure producers are uploading to the correct workspace — imports are scoped by workspace for reporting and reconciliation.
+
+## Email notifications
+
+- Configure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` environment variables to enable Nylas-powered import summaries.
+- When a producer uploads a CSV, the workspace agent receives an email summarising row counts per carrier.
 
 ## Security best practices
 
