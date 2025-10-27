@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block title %}Analytics & Reports · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h4 mb-0">Analytics & payouts</h1>
+    <p class="text-muted small mb-0">Monitor revenue mix, track chargebacks, and deliver producer-ready statements.</p>
+  </div>
+  <div class="text-end small text-muted">
+    Generated {{ generated_at.strftime('%b %d, %Y %H:%M UTC') }}
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Carrier mix</h2>
+        <span class="badge bg-info-soft text-info">Import driven</span>
+      </div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead>
+              <tr>
+                <th>Carrier</th>
+                <th>Premium</th>
+                <th>Commission</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in carrier_totals %}
+              <tr>
+                <td>{{ row.carrier }}</td>
+                <td>${{ '%.2f'|format(row.premium) }}</td>
+                <td>${{ '%.2f'|format(row.commission) }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="3" class="text-center text-muted py-4">Import statements to unlock analytics.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Producer statements</h2>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for statement in statements %}
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <div class="fw-semibold">{{ statement.producer.display_name if statement.producer else 'Producer' }}</div>
+              <div class="small text-muted">Period {{ statement.period }}</div>
+            </div>
+            <div class="text-end small">
+              <div class="fw-semibold">${{ statement.totals.total_commission if statement.totals else '0.00' }}</div>
+              <a href="#" class="link-primary small">Download PDF</a>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="list-group-item text-center text-muted">Statements will appear after you finalize a month.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">Import health</h2>
+    <span class="badge bg-success-soft text-success">Ledger ready</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th>Carrier</th>
+          <th>Status</th>
+          <th>Last updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for batch in batches %}
+        <tr>
+          <td>{{ batch.period_month }}</td>
+          <td>{{ batch.carrier.name if batch.carrier else '—' }}</td>
+          <td>{{ batch.status|capitalize }}</td>
+          <td>{{ batch.updated_at.strftime('%b %d, %Y %H:%M') if batch.updated_at else '' }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="4" class="text-center text-muted py-4">Import data to surface reconciliation insights.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
