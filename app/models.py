@@ -87,7 +87,13 @@ class User(UserMixin, TimestampMixin, db.Model):
     status = db.Column(db.String(32), nullable=False, default="active")
     last_login = db.Column(db.DateTime)
 
-    producer = db.relationship("Producer", backref="user", uselist=False)
+    producer = db.relationship(
+    "Producer",
+    backref=db.backref("user", uselist=False),
+    uselist=False,
+    foreign_keys="Producer.user_id"  # ✅ Tell SQLAlchemy which FK to use
+)
+
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)

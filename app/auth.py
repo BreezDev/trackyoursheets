@@ -1,7 +1,7 @@
 from datetime import datetime
-
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+from flask_wtf.csrf import generate_csrf   # ✅ Added for CSRF token generation
 
 from . import db
 from .models import Organization, SubscriptionPlan, User
@@ -38,7 +38,9 @@ def signup():
             flash("Welcome to TrackYourSheets!", "success")
             return redirect(url_for("main.onboarding"))
 
-    return render_template("signup.html", plans=plans)
+    # ✅ Generate CSRF token for HTML form
+    token = generate_csrf()
+    return render_template("signup.html", plans=plans, csrf_token=token)
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
