@@ -158,6 +158,23 @@ def onboarding():
 @login_required
 def guide():
     sections = get_role_guides()
+
+    # ✅ Safe conversion: works even if steps are missing or malformed
+    for section in sections:
+        fixed_steps = []
+        for step in section.get("steps", []):
+            try:
+                # Convert [("title", "..."), ("items", [...])] → {"title": "...", "items": [...]}
+                if isinstance(step, (list, tuple)):
+                    step = dict(step)
+                # Only include valid steps with 'title' and 'items'
+                if isinstance(step, dict) and "title" in step and "items" in step:
+                    fixed_steps.append(step)
+            except Exception:
+                continue
+        section["steps"] = fixed_steps
+
+    # Interactive tour setup stays the same
     tour_steps = []
     for step in get_interactive_tour():
         step_copy = {key: value for key, value in step.items() if key not in {"cta_endpoint", "cta_kwargs"}}
@@ -166,7 +183,10 @@ def guide():
         if endpoint:
             step_copy["cta_url"] = url_for(endpoint, **kwargs)
         tour_steps.append(step_copy)
+
     return render_template("guide.html", sections=sections, tour_steps=tour_steps)
+
+
 
 
 @main_bp.route("/notes/<scope>", methods=["POST"])
@@ -227,7 +247,7 @@ def save_note(scope: str):
             db.session.add(note)
 
     note.owner = current_user
-    
+
     note.content = content
     db.session.commit()
     db.session.refresh(note)
