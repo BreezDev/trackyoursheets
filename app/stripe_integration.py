@@ -71,6 +71,9 @@ class StripeGateway:
         quantity: int,
         success_url: str,
         cancel_url: str,
+        client_reference_id: Optional[str] = None,
+        metadata: Optional[Dict[str, object]] = None,
+        subscription_metadata: Optional[Dict[str, object]] = None,
     ) -> str:
         if not self.is_configured:
             raise RuntimeError("Stripe gateway is not fully configured")
@@ -81,6 +84,22 @@ class StripeGateway:
         stripe.api_key = self.secret_key
         customer_id = self.ensure_customer(organization)
         seat_quantity = max(int(quantity or 1), 1)
+        metadata_payload: Dict[str, object] = {
+            "org_id": organization.id,
+            "plan": plan.name,
+            "mode": self.mode,
+        }
+        if metadata:
+            metadata_payload.update(metadata)
+
+        subscription_metadata_payload: Dict[str, object] = {
+            "org_id": organization.id,
+            "plan": plan.name,
+            "mode": self.mode,
+        }
+        if subscription_metadata:
+            subscription_metadata_payload.update(subscription_metadata)
+
         session = stripe.checkout.Session.create(
             mode="subscription",
             customer=customer_id,
@@ -88,17 +107,26 @@ class StripeGateway:
             allow_promotion_codes=True,
             automatic_tax={"enabled": True},
             line_items=[{"price": price_id, "quantity": seat_quantity}],
+            client_reference_id=client_reference_id,
+            metadata=metadata_payload,
             subscription_data={
-                "metadata": {
-                    "org_id": organization.id,
-                    "plan": plan.name,
-                    "mode": self.mode,
-                }
+                "metadata": subscription_metadata_payload,
             },
             success_url=success_url,
             cancel_url=cancel_url,
         )
         return session.url
+
+    def retrieve_checkout_session(self, session_id: str):
+        if not session_id:
+            raise ValueError("A Stripe checkout session ID is required")
+        if not self.secret_key:
+            raise RuntimeError("Stripe gateway is not configured")
+        stripe.api_key = self.secret_key
+        return stripe.checkout.Session.retrieve(
+            session_id,
+            expand=["subscription", "line_items"],
+        )
 
     def create_billing_portal_session(
         self,

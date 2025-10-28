@@ -10,7 +10,7 @@ The admin console centralises every organisation-level configuration task. This 
 
 ## Organisation overview
 
-The landing card summarises your plan, usage, and quick stats. Billing plan changes are performed via Stripe’s Customer Portal once Stripe integration is connected. Until then, updates can be made manually through the database.
+The landing card summarises your plan, usage, and quick stats. Billing plan changes now flow through the embedded Stripe checkout and customer portal—admins can launch checkout from **Settings & billing** or jump directly to the portal for payment method updates.
 
 ## Workspace management
 
@@ -47,23 +47,14 @@ The landing card summarises your plan, usage, and quick stats. Billing plan chan
 
 ## Subscription rule updates
 
-All plan entitlements live in the `subscription_plans` table (`app/models.py`). To adjust pricing, seat limits, or billing cadence without touching Stripe:
+All plan entitlements live in the `subscription_plans` table (`app/models.py`). Stripe checkout references the same records, so updating limits or pricing in the database immediately affects the options presented during signup and plan switches:
 
 1. Open a Flask shell: `flask shell`.
 2. Load the target plan, e.g. `plan = SubscriptionPlan.query.filter_by(name="Scale").first()`.
 3. Update any attribute – `plan.price_per_user = Decimal("199.00")`, `plan.max_users = 25`, `plan.max_carriers = 25`, `plan.max_rows_per_month = 150000`, etc.
 4. Persist the change with `db.session.commit()`.
 
-Length of plan / trial settings are controlled per-organisation:
-
-1. `org = Organization.query.get(<org_id>)`
-2. Adjust `org.trial_ends_at` or set `org.trial_ends_at = datetime.utcnow() + timedelta(days=15)` to grant the standard 15-day trial.
-3. For paying tenants, update or create a `Subscription` record: `sub = Subscription.query.filter_by(org_id=org.id).first()` then set `sub.plan`, `sub.status`, `sub.trial_end`, `sub.next_bill_at`, etc.
-4. `db.session.commit()` once the organisation-level adjustments are ready.
-
-Seat limits (team member amount) are enforced by the plan’s `max_users`. Price changes rely on the same `price_per_user` column; if you need tiered or flat billing, store the amount on the plan and use it during invoice generation.
-
-When Stripe integration is active, webhook handlers should authorise these changes automatically. Until then, the admin console plus the steps above keep billing aligned with your contract.
+Seat limits (team member amount) are enforced by the plan’s `max_users`. Price changes rely on the same `price_per_user` column; if you need tiered or flat billing, store the amount on the plan and use it during invoice generation. Trial windows are now managed exclusively through Stripe coupons or subscription settings—there is no manual override inside the UI.
 
 ## Workspace email notifications via Nylas
 

@@ -66,8 +66,8 @@ admin.md             # Admin console operations guide
 4. **Create your first workspace**
 
    - Visit `http://127.0.0.1:5000/signup`.
-   - Choose a seeded plan, provide your agency details, and you’ll be redirected to onboarding.
-- From the admin console, create an office, add a workspace, and assign an agent before inviting producers.
+   - Provide your agency details and complete the hosted Stripe checkout for the pre-selected Starter plan. After payment you’ll land in onboarding.
+   - From the admin console, create an office, add a workspace, and assign an agent before inviting producers.
 - Visit **Imports → Manual sale** to record a sample commission and confirm it rolls into Reports → Analytics & payouts.
 - Use the **Dashboard → Workspace notes** section to brief producers or leave personal reminders.
 
@@ -92,7 +92,7 @@ admin.md             # Admin console operations guide
 
 ## Next steps & roadmap hints
 
-- Hook up Stripe billing (Checkout & Customer Portal) by wiring the `Subscription` model to live Stripe events.
+- Hook up Stripe billing (Checkout & Customer Portal) by wiring the `Subscription` model to live Stripe events. See `docs/stripe.md` for the current implementation.
 - Extend the import pipeline with OCR (pdfplumber/Tesseract) and asynchronous job processing via PythonAnywhere scheduled tasks.
 - Implement fuzzy matching and the learn-as-you-go resolver against `customers` and `policies` tables.
 - Generate producer statements as downloadable PDFs using WeasyPrint or wkhtmltopdf.
@@ -109,4 +109,4 @@ The seed command and modular design make it straightforward to add unit tests us
 
 ## Support
 
-For questions or contributions, please open an issue or contact the TrackYourSheets maintainers. Enhancements are welcome!
+For questions or contributions, please open an issue or contact the TrackYourSheets maintainers. Enhancements are welcome! Additional integration notes live in `docs/stripe.md` and `docs/nylas.md`.
