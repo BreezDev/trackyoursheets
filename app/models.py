@@ -87,7 +87,13 @@ class User(UserMixin, TimestampMixin, db.Model):
     status = db.Column(db.String(32), nullable=False, default="active")
     last_login = db.Column(db.DateTime)
 
-    producer = db.relationship("Producer", backref="user", uselist=False)
+    producer = db.relationship(
+    "Producer",
+    backref="user",
+    uselist=False,
+    foreign_keys="Producer.user_id"
+    )
+
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
@@ -131,6 +137,7 @@ class Producer(TimestampMixin, db.Model):
     payout_statements = db.relationship("PayoutStatement", backref="producer", lazy=True)
 
     workspace = db.relationship("Workspace", backref="producers")
+
     agent = db.relationship(
         "User",
         backref="managed_producers",

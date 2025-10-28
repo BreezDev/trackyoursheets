@@ -16,9 +16,9 @@ def send_import_notification(
     summary: Iterable[Mapping[str, object]],
 ) -> None:
     """Send a summary email when a statement import is uploaded."""
-    api_key = os.environ.get("NYLAS_API_KEY")
-    grant_id = os.environ.get("NYLAS_GRANT_ID")
-    from_email = os.environ.get("NYLAS_FROM_EMAIL", uploader.email)
+    api_key = os.environ.get("nyk_v0_eR1G99LoiMU4mhsZAv6Koo8ehZK6gQGNKUjTnIjevR5gSeq0htoZtrf5Mn4cI2Nl")
+    grant_id = os.environ.get("54ddffa7-3b11-4982-a9a0-75a544c97e80")
+    from_email = os.environ.get("itstheplugg@gmail.com", uploader.email)
 
     if not api_key or not grant_id or not recipient:
         current_app.logger.info(
