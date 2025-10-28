@@ -1,10 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 
 from . import db
-from .models import Organization, SubscriptionPlan, User
+from .models import Organization, SubscriptionPlan, Subscription, User
 
 
 auth_bp = Blueprint("auth", __name__)
@@ -28,15 +28,37 @@ def signup():
         elif User.query.filter_by(email=email).first():
             flash("Email already registered.", "danger")
         else:
-            org = Organization(name=org_name, plan_id=int(plan_id))
-            user = User(email=email, role="owner", organization=org)
-            user.set_password(password)
-            db.session.add(org)
-            db.session.add(user)
-            db.session.commit()
-            login_user(user)
-            flash("Welcome to TrackYourSheets!", "success")
-            return redirect(url_for("main.onboarding"))
+            try:
+                selected_plan_id = int(plan_id)
+            except (TypeError, ValueError):
+                flash("Select a valid plan.", "danger")
+                return render_template("signup.html", plans=plans)
+
+            plan = SubscriptionPlan.query.filter_by(id=selected_plan_id).first()
+            if not plan:
+                flash("Selected plan is no longer available.", "danger")
+            else:
+                trial_end = datetime.utcnow() + timedelta(days=15)
+                org = Organization(
+                    name=org_name,
+                    plan_id=plan.id,
+                    trial_ends_at=trial_end,
+                )
+                user = User(email=email, role="owner", organization=org)
+                user.set_password(password)
+                subscription = Subscription(
+                    organization=org,
+                    plan=plan.name,
+                    status="trialing",
+                    trial_end=trial_end,
+                )
+                db.session.add(org)
+                db.session.add(user)
+                db.session.add(subscription)
+                db.session.commit()
+                login_user(user)
+                flash("Welcome to TrackYourSheets!", "success")
+                return redirect(url_for("main.onboarding"))
 
     return render_template("signup.html", plans=plans)
 

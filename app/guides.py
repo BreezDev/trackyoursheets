@@ -13,7 +13,7 @@ def get_role_guides() -> List[Dict[str, object]]:
     and a list of playbook steps that can be rendered inside accordions.
     """
 
-    sections = [
+    return [
         {
             "title": "Agents",
             "slug": "agents",
@@ -332,16 +332,6 @@ def get_role_guides() -> List[Dict[str, object]]:
             ],
         },
     ]
-
-    for section in sections:
-        fixed_steps = []
-        for step in section.get("steps", []):
-            if isinstance(step, (list, tuple)):
-                step = dict(step)
-            fixed_steps.append(step)
-        section["steps"] = fixed_steps
-
-    return sections
 
 
 def get_interactive_tour() -> List[Dict[str, object]]:

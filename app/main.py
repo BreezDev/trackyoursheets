@@ -1,7 +1,18 @@
-from flask import Blueprint, render_template, request, jsonify, abort, url_for
+from datetime import datetime, timedelta
+
+from flask import (
+    Blueprint,
+    render_template,
+    request,
+    jsonify,
+    abort,
+    url_for,
+    flash,
+    redirect,
+)
 from flask_login import current_user, login_required
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from .models import (
     AuditLog,
@@ -10,6 +21,12 @@ from .models import (
     Workspace,
     WorkspaceNote,
     WorkspaceChatMessage,
+    Organization,
+    SubscriptionPlan,
+    Subscription,
+    Coupon,
+    User,
+    Producer,
 )
 from .guides import get_role_guides, get_interactive_tour
 from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces, user_can_access_workspace
@@ -158,23 +175,6 @@ def onboarding():
 @login_required
 def guide():
     sections = get_role_guides()
-
-    # ✅ Safe conversion: works even if steps are missing or malformed
-    for section in sections:
-        fixed_steps = []
-        for step in section.get("steps", []):
-            try:
-                # Convert [("title", "..."), ("items", [...])] → {"title": "...", "items": [...]}
-                if isinstance(step, (list, tuple)):
-                    step = dict(step)
-                # Only include valid steps with 'title' and 'items'
-                if isinstance(step, dict) and "title" in step and "items" in step:
-                    fixed_steps.append(step)
-            except Exception:
-                continue
-        section["steps"] = fixed_steps
-
-    # Interactive tour setup stays the same
     tour_steps = []
     for step in get_interactive_tour():
         step_copy = {key: value for key, value in step.items() if key not in {"cta_endpoint", "cta_kwargs"}}
@@ -183,10 +183,247 @@ def guide():
         if endpoint:
             step_copy["cta_url"] = url_for(endpoint, **kwargs)
         tour_steps.append(step_copy)
+    back_to = request.args.get("back_to")
+    return render_template("guide.html", sections=sections, tour_steps=tour_steps, back_to=back_to)
 
-    return render_template("guide.html", sections=sections, tour_steps=tour_steps)
 
+@main_bp.route("/settings", methods=["GET", "POST"])
+@login_required
+def settings():
+    org = Organization.query.get_or_404(current_user.org_id)
+    subscription = (
+        Subscription.query.filter_by(org_id=org.id)
+        .order_by(Subscription.created_at.desc())
+        .first()
+    )
+    plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
+    can_manage_plan = current_user.role in {"owner", "admin", "agent"}
 
+    if request.method == "POST":
+        intent = request.form.get("intent")
+        if intent == "profile":
+            new_email_raw = (request.form.get("email") or "").strip()
+            display_name = (request.form.get("display_name") or "").strip()
+            new_password = request.form.get("new_password") or ""
+            confirm_password = request.form.get("confirm_password") or ""
+            errors = False
+
+            if not new_email_raw:
+                flash("Email is required.", "danger")
+                errors = True
+            else:
+                normalized_email = new_email_raw.lower()
+                current_email_normalized = (current_user.email or "").lower()
+                if normalized_email != current_email_normalized:
+                    conflict = (
+                        User.query.filter(func.lower(User.email) == normalized_email)
+                        .filter(User.id != current_user.id)
+                        .first()
+                    )
+                    if conflict:
+                        flash("That email is already in use.", "danger")
+                        errors = True
+                if not errors:
+                    current_user.email = new_email_raw
+
+            if display_name and getattr(current_user, "producer", None):
+                current_user.producer.display_name = display_name
+
+            if new_password:
+                if len(new_password) < 8:
+                    flash("Passwords must be at least 8 characters.", "danger")
+                    errors = True
+                elif new_password != confirm_password:
+                    flash("Passwords do not match.", "danger")
+                    errors = True
+                else:
+                    current_user.set_password(new_password)
+
+            if errors:
+                db.session.rollback()
+            else:
+                db.session.commit()
+                flash("Profile updated successfully.", "success")
+            return redirect(url_for("main.settings"))
+
+        if intent == "plan":
+            if not can_manage_plan:
+                flash("You do not have permission to change plans.", "danger")
+                return redirect(url_for("main.settings"))
+
+            plan_id_raw = request.form.get("plan_id")
+            try:
+                selected_plan_id = int(plan_id_raw)
+            except (TypeError, ValueError):
+                flash("Select a plan to continue.", "danger")
+                return redirect(url_for("main.settings"))
+
+            plan = SubscriptionPlan.query.filter_by(id=selected_plan_id).first()
+            if not plan:
+                flash("Selected plan could not be found.", "danger")
+                return redirect(url_for("main.settings"))
+
+            org.plan_id = plan.id
+            if subscription:
+                subscription.plan = plan.name
+                if subscription.status not in {"active", "trialing"}:
+                    subscription.status = "active"
+            else:
+                subscription = Subscription(
+                    organization=org,
+                    plan=plan.name,
+                    status="active",
+                )
+                db.session.add(subscription)
+
+            db.session.commit()
+            flash(f"Plan updated to {plan.name}.", "success")
+            return redirect(url_for("main.settings"))
+
+        if intent == "trial":
+            if not can_manage_plan:
+                flash("You do not have permission to manage the trial.", "danger")
+                return redirect(url_for("main.settings"))
+
+            action = request.form.get("action", "set")
+            if action == "end":
+                org.trial_ends_at = datetime.utcnow()
+                if subscription:
+                    subscription.status = "active"
+                    subscription.trial_end = None
+                db.session.commit()
+                flash("Trial ended. Billing continues on the selected plan.", "info")
+                return redirect(url_for("main.settings"))
+
+            trial_days = request.form.get("trial_days")
+            try:
+                trial_days_value = int(trial_days)
+            except (TypeError, ValueError):
+                flash("Enter the number of days to grant for the trial.", "danger")
+                return redirect(url_for("main.settings"))
+
+            if trial_days_value < 1:
+                flash("Trial days must be at least 1.", "danger")
+                return redirect(url_for("main.settings"))
+
+            new_trial_end = datetime.utcnow() + timedelta(days=trial_days_value)
+            org.trial_ends_at = new_trial_end
+            if subscription:
+                subscription.status = "trialing"
+                subscription.trial_end = new_trial_end
+            else:
+                subscription = Subscription(
+                    organization=org,
+                    plan=org.plan.name if org.plan else "Trial",
+                    status="trialing",
+                    trial_end=new_trial_end,
+                )
+                db.session.add(subscription)
+
+            db.session.commit()
+            flash(
+                f"Trial extended through {new_trial_end.strftime('%b %d, %Y')}.",
+                "success",
+            )
+            return redirect(url_for("main.settings"))
+
+        if intent == "redeem":
+            if not can_manage_plan:
+                flash("You do not have permission to redeem coupons.", "danger")
+                return redirect(url_for("main.settings"))
+
+            code = (request.form.get("coupon_code") or "").strip()
+            if not code:
+                flash("Enter a coupon code to redeem.", "danger")
+                return redirect(url_for("main.settings"))
+
+            coupon = (
+                Coupon.query.filter(func.lower(Coupon.internal_code) == code.lower())
+                .first()
+            )
+            if not coupon:
+                flash("Coupon code not recognized.", "danger")
+                return redirect(url_for("main.settings"))
+
+            now = datetime.utcnow()
+            if coupon.expires_at and coupon.expires_at < now:
+                flash("This coupon has expired.", "danger")
+                return redirect(url_for("main.settings"))
+
+            if coupon.max_redemptions is not None and coupon.max_redemptions <= 0:
+                flash("This coupon has already been fully redeemed.", "danger")
+                return redirect(url_for("main.settings"))
+
+            applied_plan = None
+            if coupon.applies_to_plan:
+                applied_plan = (
+                    SubscriptionPlan.query.filter(
+                        func.lower(SubscriptionPlan.name)
+                        == coupon.applies_to_plan.lower()
+                    )
+                    .first()
+                )
+                if applied_plan:
+                    org.plan_id = applied_plan.id
+                    if subscription:
+                        subscription.plan = applied_plan.name
+                elif coupon.applies_to_plan:
+                    flash(
+                        "Coupon references a plan that is no longer available.",
+                        "warning",
+                    )
+
+            extension_days = coupon.trial_extension_days or 0
+            if extension_days:
+                trial_base = org.trial_ends_at if org.trial_ends_at and org.trial_ends_at > now else now
+                new_trial_end = trial_base + timedelta(days=extension_days)
+                org.trial_ends_at = new_trial_end
+                if subscription:
+                    subscription.status = "trialing"
+                    subscription.trial_end = new_trial_end
+                else:
+                    subscription = Subscription(
+                        organization=org,
+                        plan=(
+                            applied_plan.name
+                            if applied_plan
+                            else (org.plan.name if org.plan else "Trial")
+                        ),
+                        status="trialing",
+                        trial_end=new_trial_end,
+                    )
+                    db.session.add(subscription)
+
+            if coupon.max_redemptions is not None:
+                coupon.max_redemptions -= 1
+
+            db.session.commit()
+            flash(
+                f"Coupon {code.upper()} applied successfully.",
+                "success",
+            )
+            return redirect(url_for("main.settings"))
+
+    trial_days_remaining = None
+    if org.trial_ends_at:
+        delta = org.trial_ends_at - datetime.utcnow()
+        trial_days_remaining = max(delta.days + (1 if delta.seconds > 0 else 0), 0)
+
+    usage_snapshot = {
+        "users": User.query.filter_by(org_id=org.id).count(),
+        "workspaces": Workspace.query.filter_by(org_id=org.id).count(),
+        "producers": Producer.query.filter_by(org_id=org.id).count(),
+    }
+
+    return render_template(
+        "settings.html",
+        plans=plans,
+        organization=org,
+        subscription=subscription,
+        trial_days_remaining=trial_days_remaining,
+        can_manage_plan=can_manage_plan,
+        usage_snapshot=usage_snapshot,
+    )
 
 
 @main_bp.route("/notes/<scope>", methods=["POST"])
@@ -247,7 +484,7 @@ def save_note(scope: str):
             db.session.add(note)
 
     note.owner = current_user
-
+    
     note.content = content
     db.session.commit()
     db.session.refresh(note)

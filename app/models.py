@@ -31,6 +31,7 @@ class Organization(TimestampMixin, db.Model):
     commission_transactions = db.relationship("CommissionTransaction", backref="organization", lazy=True)
     payout_statements = db.relationship("PayoutStatement", backref="organization", lazy=True)
     categories = db.relationship("CategoryTag", backref="organization", lazy=True)
+    subscriptions = db.relationship("Subscription", backref="organization", lazy=True)
 
 
 class SubscriptionPlan(db.Model):
@@ -378,6 +379,7 @@ class Coupon(TimestampMixin, db.Model):
     applies_to_plan = db.Column(db.String(80))
     expires_at = db.Column(db.DateTime)
     max_redemptions = db.Column(db.Integer)
+    trial_extension_days = db.Column(db.Integer, nullable=False, default=0)
 
 
 class Subscription(TimestampMixin, db.Model):

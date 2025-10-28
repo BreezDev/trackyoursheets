@@ -1,10 +1,15 @@
 {% extends 'base.html' %}
 {% block title %}Manage Categories · TrackYourSheets{% endblock %}
 {% block content %}
+{% set active_tab = 'categories' %}
+{% include 'admin/_subnav.html' %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h1 class="h3 mb-1">Manage categories</h1>
     <p class="text-muted mb-0">Configure the line of business and status tags that drive imports, analytics, and reports.</p>
+    <div class="alert alert-warning mt-3 mb-0" role="alert">
+      Categories update instantly—rename or remove them here to keep imports, analytics filters, and commission exports aligned.
+    </div>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('admin.index') }}">Back to admin</a>
 </div>
