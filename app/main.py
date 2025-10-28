@@ -1,14 +1,58 @@
-from flask import Blueprint, render_template, request, jsonify, abort
+from flask import Blueprint, render_template, request, jsonify, abort, url_for
 from flask_login import current_user, login_required
 
 from sqlalchemy import or_
 
-from .models import AuditLog, CommissionTransaction, ImportBatch, Workspace, WorkspaceNote
+from .models import (
+    AuditLog,
+    CommissionTransaction,
+    ImportBatch,
+    Workspace,
+    WorkspaceNote,
+    WorkspaceChatMessage,
+)
+from .guides import get_role_guides, get_interactive_tour
 from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces, user_can_access_workspace
 from . import db
 
 
 main_bp = Blueprint("main", __name__)
+
+
+def _display_user_name(user):
+    if not user:
+        return "Unknown user"
+    if hasattr(user, "display_name_for_ui"):
+        return user.display_name_for_ui
+    if getattr(user, "email", None):
+        return user.email
+    return "Unknown user"
+
+
+def _format_timestamp(value):
+    if not value:
+        return None
+    return value.strftime("%b %d, %Y %I:%M %p")
+
+
+def _note_meta(note):
+    if not note:
+        return None
+    return {
+        "editor": _display_user_name(note.owner),
+        "timestamp": _format_timestamp(note.updated_at),
+        "iso": note.updated_at.isoformat() if note.updated_at else None,
+    }
+
+
+def _serialize_chat_message(message: WorkspaceChatMessage) -> dict:
+    return {
+        "id": message.id,
+        "content": message.content,
+        "author": _display_user_name(message.author),
+        "created_at": message.created_at.isoformat() if message.created_at else None,
+        "created_at_display": _format_timestamp(message.created_at),
+    }
 
 
 @main_bp.route("/")
@@ -54,6 +98,8 @@ def dashboard():
     )
     personal_note = None
     shared_note = None
+    chat_messages = []
+    chat_payload = []
     if active_workspace:
         personal_note = (
             WorkspaceNote.query.filter_by(
@@ -74,6 +120,17 @@ def dashboard():
             .order_by(WorkspaceNote.updated_at.desc())
             .first()
         )
+        chat_query = (
+            WorkspaceChatMessage.query.filter_by(
+                org_id=current_user.org_id,
+                workspace_id=active_workspace.id,
+            )
+            .order_by(WorkspaceChatMessage.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        chat_messages = list(reversed(chat_query))
+        chat_payload = [_serialize_chat_message(message) for message in chat_messages]
 
     return render_template(
         "dashboard.html",
@@ -84,6 +141,10 @@ def dashboard():
         active_workspace=active_workspace,
         personal_note=personal_note,
         shared_note=shared_note,
+        personal_note_meta=_note_meta(personal_note),
+        shared_note_meta=_note_meta(shared_note),
+        chat_messages=chat_messages,
+        chat_messages_payload=chat_payload,
     )
 
 
@@ -91,6 +152,21 @@ def dashboard():
 @login_required
 def onboarding():
     return render_template("onboarding.html")
+
+
+@main_bp.route("/guide")
+@login_required
+def guide():
+    sections = get_role_guides()
+    tour_steps = []
+    for step in get_interactive_tour():
+        step_copy = {key: value for key, value in step.items() if key not in {"cta_endpoint", "cta_kwargs"}}
+        endpoint = step.get("cta_endpoint")
+        kwargs = step.get("cta_kwargs", {})
+        if endpoint:
+            step_copy["cta_url"] = url_for(endpoint, **kwargs)
+        tour_steps.append(step_copy)
+    return render_template("guide.html", sections=sections, tour_steps=tour_steps)
 
 
 @main_bp.route("/notes/<scope>", methods=["POST"])
@@ -130,6 +206,7 @@ def save_note(scope: str):
                 office_id=workspace.office_id,
                 owner_id=current_user.id,
                 scope="personal",
+                owner=current_user,
             )
             db.session.add(note)
     else:
@@ -143,12 +220,58 @@ def save_note(scope: str):
                 org_id=current_user.org_id,
                 workspace_id=workspace.id,
                 office_id=workspace.office_id,
-                owner_id=current_user.id,
                 scope="shared",
+                owner_id=current_user.id,
+                owner=current_user,
             )
             db.session.add(note)
 
+    note.owner = current_user
+    
     note.content = content
     db.session.commit()
+    db.session.refresh(note)
 
-    return jsonify({"status": "saved", "updated_at": note.updated_at.isoformat()})
+    return jsonify(
+        {
+            "status": "saved",
+            "updated_at": note.updated_at.isoformat() if note.updated_at else None,
+            "updated_at_display": _format_timestamp(note.updated_at),
+            "editor": _display_user_name(note.owner),
+        }
+    )
+
+
+@main_bp.route("/chat/<int:workspace_id>/messages", methods=["GET", "POST"])
+@login_required
+def workspace_chat(workspace_id: int):
+    if not user_can_access_workspace(current_user, workspace_id):
+        abort(403)
+
+    if request.method == "POST":
+        data = request.get_json() or {}
+        content = (data.get("content") or "").strip()
+        if not content:
+            abort(400, description="Message content is required.")
+
+        message = WorkspaceChatMessage(
+            org_id=current_user.org_id,
+            workspace_id=workspace_id,
+            author_id=current_user.id,
+            content=content,
+        )
+        db.session.add(message)
+        db.session.commit()
+        db.session.refresh(message)
+        return jsonify(_serialize_chat_message(message)), 201
+
+    messages = (
+        WorkspaceChatMessage.query.filter_by(
+            org_id=current_user.org_id,
+            workspace_id=workspace_id,
+        )
+        .order_by(WorkspaceChatMessage.created_at.asc())
+        .limit(100)
+        .all()
+    )
+    return jsonify([_serialize_chat_message(message) for message in messages])

@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import (
     Blueprint,
+    abort,
     flash,
     redirect,
     render_template,
@@ -37,6 +38,7 @@ from .models import (
 )
 from .workspaces import get_accessible_workspaces, get_accessible_workspace_ids
 from .nylas_email import send_workspace_invitation
+from .guides import get_role_guides
 
 
 admin_bp = Blueprint("admin", __name__)
@@ -725,6 +727,87 @@ def apply_commission_override():
     return redirect(return_to)
 
 
+@admin_bp.route("/transactions/<int:txn_id>/edit", methods=["POST"])
+def edit_transaction(txn_id: int):
+    txn = CommissionTransaction.query.filter_by(
+        id=txn_id,
+        org_id=current_user.org_id,
+    ).first_or_404()
+
+    accessible_ids = set(get_accessible_workspace_ids(current_user))
+    if (
+        current_user.role == "agent"
+        and accessible_ids
+        and txn.workspace_id not in accessible_ids
+    ):
+        abort(403)
+
+    return_to = request.form.get("return_url") or request.referrer or url_for(
+        "admin.leaderboard"
+    )
+
+    manual_amount_raw = request.form.get("manual_amount")
+    manual_split_raw = request.form.get("manual_split_pct")
+    status_value = (request.form.get("status") or "").strip() or None
+    note_body = (request.form.get("notes") or "").strip() or None
+
+    manual_amount = None
+    if manual_amount_raw:
+        try:
+            manual_amount = Decimal(manual_amount_raw)
+        except (InvalidOperation, TypeError):
+            flash("Enter a valid manual commission amount.", "danger")
+            return redirect(return_to)
+
+    manual_split = None
+    if manual_split_raw:
+        try:
+            manual_split = Decimal(manual_split_raw)
+        except (InvalidOperation, TypeError):
+            flash("Enter a valid manual split percentage.", "danger")
+            return redirect(return_to)
+
+    if manual_amount is not None:
+        txn.manual_amount = manual_amount
+        txn.amount = manual_amount
+        txn.commission = manual_amount
+        txn.override_source = "manual_edit"
+    elif request.form.get("clear_manual_amount"):
+        txn.manual_amount = None
+        if txn.override_source == "manual_edit":
+            txn.override_source = None
+
+    if manual_split is not None:
+        txn.manual_split_pct = manual_split
+        txn.split_pct = manual_split
+        txn.override_source = txn.override_source or "manual_edit"
+    elif request.form.get("clear_manual_split"):
+        txn.manual_split_pct = None
+
+    if status_value:
+        txn.status = status_value
+
+    if note_body or manual_amount is not None or manual_split is not None:
+        override = CommissionOverride(
+            org_id=current_user.org_id,
+            transaction_id=txn.id,
+            override_type="manual_edit",
+            flat_amount=manual_amount,
+            split_pct=manual_split,
+            applied_by=current_user.id,
+            notes=note_body,
+        )
+        db.session.add(override)
+
+    txn.override_applied_at = datetime.utcnow()
+    txn.override_applied_by = current_user.id
+    db.session.add(txn)
+    db.session.commit()
+
+    flash("Commission settings updated for the sale.", "success")
+    return redirect(return_to)
+
+
 @admin_bp.route("/categories", methods=["GET", "POST"])
 def manage_categories():
     if request.method == "POST":
@@ -791,8 +874,12 @@ def delete_category(category_id: int):
 
 @admin_bp.route("/how-to")
 def how_to():
-    sections = _build_how_to_sections()
-    return render_template("admin/how_to.html", sections=sections)
+    sections = get_role_guides()
+    return render_template(
+        "guide.html",
+        sections=sections,
+        back_to=url_for("admin.index"),
+    )
 
 
 def _get_category_names(org_id: int):
@@ -803,54 +890,3 @@ def _get_category_names(org_id: int):
     )
     return [tag.name for tag in tags]
 
-
-def _build_how_to_sections():
-    return [
-        {
-            "title": "Agents",
-            "entries": [
-                "Assign producers to workspaces and configure commission splits.",
-                "Review imports under the Imports tab and resolve unmatched rows.",
-                "Use the Producer Leaderboard to monitor progress and apply manual overrides when necessary.",
-            ],
-        },
-        {
-            "title": "Producers",
-            "entries": [
-                "Track recent sales activity from the dashboard and filter analytics for your book.",
-                "Download individualized commission statements from the Reports area.",
-                "Add context using sale notes so teammates understand adjustments and audit trails.",
-            ],
-        },
-        {
-            "title": "Bookkeepers",
-            "entries": [
-                "Export commission sheets per producer or for the full organization from Reports → Commission Sheets.",
-                "Use analytics filters to reconcile totals by line of business or carrier.",
-                "Leverage audit logs to validate overrides and payouts before sending statements.",
-            ],
-        },
-        {
-            "title": "Auditors",
-            "entries": [
-                "Open the Audit dashboard to review recent overrides, imports, and manual adjustments.",
-                "Filter transactions by status to surface records pending approval.",
-                "Export audit logs on demand for compliance reporting.",
-            ],
-        },
-        {
-            "title": "Admins",
-            "entries": [
-                "Manage billing, subscription limits, and global settings under Admin → Settings.",
-                "Invite team members and trigger automatic workspace emails for smooth onboarding.",
-                "Configure categories so agents and producers can filter every report consistently.",
-            ],
-        },
-        {
-            "title": "Read-only",
-            "entries": [
-                "Navigate dashboards and analytics with confidence using tooltips embedded across charts.",
-                "Access the How-To library anytime from the Admin console for quick reference.",
-            ],
-        },
-    ]

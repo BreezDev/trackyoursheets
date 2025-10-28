@@ -8,7 +8,8 @@
   </div>
   <div class="btn-group">
     <a class="btn btn-outline-secondary" href="{{ url_for('admin.leaderboard') }}">Back to leaderboard</a>
-    <a class="btn btn-outline-primary" href="{{ url_for('reports.commission_sheet', producer_id=producer.id) }}">Download statement</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('reports.commission_sheet', producer_id=producer.id, format='csv') }}">Download CSV</a>
+    <a class="btn btn-primary" href="{{ url_for('reports.commission_sheet', producer_id=producer.id, format='pdf') }}">Download PDF</a>
   </div>
 </div>
 
@@ -111,6 +112,7 @@
           <th scope="col">Split</th>
           <th scope="col">Status</th>
           <th scope="col">Notes</th>
+          <th scope="col" class="text-end">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -144,17 +146,84 @@
             {% endif %}
             {{ txn.notes or '' }}
           </td>
+          {% set split_value = txn.manual_split_pct if txn.manual_split_pct is not none else txn.split_pct %}
+          <td class="text-end">
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary"
+              data-bs-toggle="modal"
+              data-bs-target="#editTxnModal"
+              data-update-url="{{ url_for('admin.edit_transaction', txn_id=txn.id) }}"
+              data-txn-id="{{ txn.id }}"
+              data-txn-date="{{ txn.txn_date.strftime('%Y-%m-%d') if txn.txn_date else '' }}"
+              data-txn-policy="{{ txn.policy.policy_number if txn.policy else '' }}"
+              data-txn-premium="{{ '%.2f'|format(txn.premium or 0) }}"
+              data-txn-amount="{{ '%.2f'|format((txn.manual_amount if txn.manual_amount is not none else txn.amount) or 0) }}"
+              data-txn-split="{{ '%.2f'|format(split_value) if split_value is not none else '' }}"
+              data-txn-status="{{ txn.status or '' }}"
+            >Configure</button>
+          </td>
         </tr>
         {% endfor %}
         {% else %}
         <tr>
-          <td colspan="9" class="text-center text-muted py-4">No sales match the current filters.</td>
+          <td colspan="10" class="text-center text-muted py-4">No sales match the current filters.</td>
         </tr>
         {% endif %}
       </tbody>
     </table>
   </div>
 </form>
+
+<div class="modal fade" id="editTxnModal" tabindex="-1" aria-labelledby="editTxnModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h1 class="modal-title fs-5" id="editTxnModalLabel">Configure commission</h1>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post">
+        <div class="modal-body">
+          <input type="hidden" name="return_url" value="{{ request.full_path }}">
+          <div class="mb-3">
+            <div class="fw-semibold" data-txn-summary>Sale details</div>
+            <div class="small text-muted" data-txn-meta></div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Manual commission ($)</label>
+              <input type="number" step="0.01" class="form-control" name="manual_amount">
+              <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" value="1" id="clearManualAmount" name="clear_manual_amount">
+                <label class="form-check-label" for="clearManualAmount">Clear manual amount</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Split %</label>
+              <input type="number" step="0.01" class="form-control" name="manual_split_pct">
+              <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" value="1" id="clearManualSplit" name="clear_manual_split">
+                <label class="form-check-label" for="clearManualSplit">Clear manual split</label>
+              </div>
+            </div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">Status</label>
+            <input type="text" class="form-control" name="status" placeholder="e.g. provisional, approved">
+          </div>
+          <div class="mt-3">
+            <label class="form-label">Notes for audit trail</label>
+            <textarea class="form-control" name="notes" rows="3" placeholder="Why are you adjusting this commission?"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
 {% endblock %}
 {% block extra_scripts %}
@@ -166,6 +235,30 @@
       document.querySelectorAll('input[name="transaction_ids"]').forEach((box) => {
         box.checked = event.target.checked;
       });
+    });
+  }
+
+  const editModal = document.getElementById('editTxnModal');
+  if (editModal) {
+    editModal.addEventListener('show.bs.modal', (event) => {
+      const trigger = event.relatedTarget;
+      if (!trigger) {
+        return;
+      }
+      const form = editModal.querySelector('form');
+      form.action = trigger.getAttribute('data-update-url');
+      form.querySelector('input[name="manual_amount"]').value = trigger.getAttribute('data-txn-amount') || '';
+      form.querySelector('input[name="manual_split_pct"]').value = trigger.getAttribute('data-txn-split') || '';
+      form.querySelector('input[name="status"]').value = trigger.getAttribute('data-txn-status') || '';
+      form.querySelector('textarea[name="notes"]').value = '';
+      form.querySelector('#clearManualAmount').checked = false;
+      form.querySelector('#clearManualSplit').checked = false;
+
+      const policy = trigger.getAttribute('data-txn-policy') || 'Unassigned policy';
+      const date = trigger.getAttribute('data-txn-date') || 'Date unknown';
+      const premium = trigger.getAttribute('data-txn-premium') || '0.00';
+      editModal.querySelector('[data-txn-summary]').textContent = `${policy}`;
+      editModal.querySelector('[data-txn-meta]').textContent = `${date} · Premium $${premium}`;
     });
   }
 </script>
