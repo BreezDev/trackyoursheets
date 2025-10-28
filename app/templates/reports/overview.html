@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+{% block title %}Analytics & Reports · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h4 mb-0">Analytics & payouts</h1>
+    <p class="text-muted small mb-0">Monitor revenue mix, track chargebacks, and deliver producer-ready statements.</p>
+  </div>
+  <div class="text-end small text-muted">
+    Generated {{ generated_at.strftime('%b %d, %Y %H:%M UTC') }}
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-7">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Carrier mix</h2>
+        <span class="badge bg-info-soft text-info">Import driven</span>
+      </div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead>
+              <tr>
+                <th>Carrier</th>
+                <th>Premium</th>
+                <th>Commission</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in carrier_totals %}
+              <tr>
+                <td>{{ row.carrier }}</td>
+                <td>${{ '%.2f'|format(row.premium) }}</td>
+                <td>${{ '%.2f'|format(row.commission) }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="3" class="text-center text-muted py-4">Import statements to unlock analytics.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="card shadow-sm mt-4">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Recent commissions</h2>
+        <span class="badge bg-primary-soft text-primary">Live</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Producer</th>
+              <th>Carrier</th>
+              <th>Category</th>
+              <th class="text-end">Premium</th>
+              <th class="text-end">Amount</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for txn in recent_transactions %}
+            <tr>
+              <td>{{ txn.txn_date.strftime('%b %d, %Y') if txn.txn_date }}</td>
+              <td>{{ txn.producer.display_name if txn.producer else 'Unassigned' }}</td>
+              <td>{{ txn.carrier_name or (txn.policy.carrier.name if txn.policy and txn.policy.carrier else '—') }}</td>
+              <td>{{ txn.category or 'raw' }}</td>
+              <td class="text-end">${{ '%.2f'|format(txn.premium or 0) }}</td>
+              <td class="text-end">${{ '%.2f'|format(txn.amount or 0) }}</td>
+              <td class="text-end">
+                {% if txn.batch_id %}
+                <a class="link-primary small" href="{{ url_for('imports.detail', batch_id=txn.batch_id) }}">View batch</a>
+                {% else %}
+                <span class="badge bg-secondary">{{ txn.source|capitalize }}</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-3">Upload statements or add manual sales to populate activity.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-5">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Producer leaderboard</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Producer</th>
+              <th class="text-end">Premium</th>
+              <th class="text-end">Commission</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in producer_totals %}
+            <tr>
+              <td>{{ row.producer }}</td>
+              <td class="text-end">${{ '%.2f'|format(row.premium) }}</td>
+              <td class="text-end">${{ '%.2f'|format(row.commission) }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="3" class="text-center text-muted py-3">Assign producers or add manual entries to see their totals.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card shadow-sm mt-4">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Revenue categories</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th class="text-end">Premium</th>
+              <th class="text-end">Commission</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in category_totals %}
+            <tr>
+              <td class="text-uppercase">{{ row.category }}</td>
+              <td class="text-end">${{ '%.2f'|format(row.premium) }}</td>
+              <td class="text-end">${{ '%.2f'|format(row.commission) }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="3" class="text-center text-muted py-3">Categorise transactions to see your revenue mix.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card shadow-sm mt-4">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Producer statements</h2>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for statement in statements %}
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <div class="fw-semibold">{{ statement.producer.display_name if statement.producer else 'Producer' }}</div>
+              <div class="small text-muted">Period {{ statement.period }}</div>
+            </div>
+            <div class="text-end small">
+              {% set totals = statement.totals or {} %}
+              {% set total_commission = totals.get('total_commission', totals.get('commission', '0.00')) %}
+              <div class="fw-semibold">${{ total_commission }}</div>
+              <span class="badge bg-secondary">Pending export</span>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="list-group-item text-center text-muted">Statements will appear after you finalize a month.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">Import health</h2>
+    <span class="badge bg-success-soft text-success">Ledger ready</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th>Carrier</th>
+          <th>Status</th>
+          <th>Last updated</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for batch in batches %}
+        <tr>
+          <td>{{ batch.period_month }}</td>
+          <td>{{ batch.carrier.name if batch.carrier else '—' }}</td>
+          <td>{{ batch.status|capitalize }}</td>
+          <td>{{ batch.updated_at.strftime('%b %d, %Y %H:%M') if batch.updated_at else '' }}</td>
+          <td class="text-end"><a class="link-primary small" href="{{ url_for('imports.detail', batch_id=batch.id) }}">Inspect</a></td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="text-center text-muted py-4">Import data to surface reconciliation insights.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
