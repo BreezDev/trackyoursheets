@@ -12,7 +12,8 @@ TrackYourSheets is a Flask-powered commissions CRM tailored for independent insu
 - **Workspace hierarchy** – Model offices, workspaces, agents, and producers with fine-grained role controls.
 - **Auto carrier detection** – Ingest CSVs with a `carrier` column and automatically split rows into carrier-specific batches.
 - **Admin controls** – Manage organisations, users, carriers, rules, API tokens, and workspace assignments with role-based access.
-- **Email notifications** – Send import summaries via Nylas when producers upload fresh statements.
+- **Email notifications** – Send welcome, invite, and import summary emails via Nylas with configurable recipients.
+- **Stripe billing** – Launch Checkout and the Customer Portal directly from settings when API keys are configured.
 - **Manual commissions** – Capture ad-hoc sales or adjustments per workspace with split enforcement and carrier tagging.
 - **Collaborative notes** – Keep personal scratchpads and shared workspace bulletins that auto-save for your team.
 - **Commission viewer** – Analyse recent payouts by carrier, producer, and revenue category with direct links back to source batches.
@@ -77,7 +78,9 @@ admin.md             # Admin console operations guide
 3. **Configure environment variables** in the PythonAnywhere dashboard:
    - `SECRET_KEY` – strong random string.
    - `DATABASE_URL` (optional) – defaults to SQLite (`sqlite:///trackyoursheets.db`). For PythonAnywhere MySQL, supply `mysql+mysqlclient://user:password@host/dbname`.
-   - `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, `NYLAS_FROM_EMAIL` – required to send import notifications through Nylas.
+   - `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, `NYLAS_FROM_EMAIL`, `NYLAS_FROM_NAME` (optional), `NYLAS_NOTIFICATION_EMAILS` (optional comma list), and `NYLAS_SIGNUP_ALERT_EMAILS` (optional comma list) – enable Nylas-powered signup, invite, and import notifications.
+   - Stripe sandbox keys: `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY`, and plan price IDs (`STRIPE_TEST_PRICE_STARTER`, `STRIPE_TEST_PRICE_GROWTH`, `STRIPE_TEST_PRICE_SCALE`).
+   - Stripe live keys (when ready): `STRIPE_LIVE_SECRET_KEY`, `STRIPE_LIVE_PUBLISHABLE_KEY`, and matching live price IDs (`STRIPE_LIVE_PRICE_*`). Set `STRIPE_MODE=live` when deploying to production.
 4. **Run the seed command** once:
 
    ```bash
