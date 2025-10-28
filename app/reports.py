@@ -154,6 +154,17 @@ def analytics_export():
     fmt = (request.args.get("format") or "csv").lower()
     filename = "analytics_report"
 
+    dataset["columns"] = [
+        {"key": "date", "label": "Date"},
+        {"key": "producer", "label": "Producer"},
+        {"key": "workspace", "label": "Workspace"},
+        {"key": "category", "label": "Category"},
+        {"key": "product_type", "label": "Product"},
+        {"key": "premium", "label": "Premium", "format": "currency"},
+        {"key": "commission", "label": "Commission", "format": "currency"},
+        {"key": "status", "label": "Status"},
+    ]
+
     if fmt == "pdf":
         pdf_bytes = _build_pdf_report("Analytics summary", dataset)
         return send_file(
@@ -228,6 +239,25 @@ def commission_sheet():
 
     transactions = query.order_by(CommissionTransaction.txn_date.asc()).all()
 
+    table_rows = [_commission_row(txn) for txn in transactions]
+    summary = {
+        "commission": sum(float(txn.amount or 0) for txn in transactions),
+        "premium": sum(float(txn.premium or 0) for txn in transactions),
+        "count": len(transactions),
+    }
+
+    columns = [
+        {"key": "date", "label": "Date"},
+        {"key": "producer", "label": "Producer"},
+        {"key": "workspace", "label": "Workspace"},
+        {"key": "policy", "label": "Policy"},
+        {"key": "category", "label": "Category"},
+        {"key": "premium", "label": "Premium", "format": "currency"},
+        {"key": "commission", "label": "Commission", "format": "currency"},
+        {"key": "split", "label": "Split"},
+        {"key": "status", "label": "Status"},
+    ]
+
     org_name = (
         current_user.organization.name
         if getattr(current_user, "organization", None) and current_user.organization
@@ -244,21 +274,14 @@ def commission_sheet():
         else "commission_sheet_all"
     )
 
+    dataset = {
+        "table": table_rows,
+        "summary": summary,
+        "columns": columns,
+    }
+
     if fmt == "pdf":
-        pdf_bytes = _build_pdf_report(
-            title,
-            {
-                "table": [
-                    _commission_row(txn)
-                    for txn in transactions
-                ],
-                "summary": {
-                    "commission": sum(float(txn.amount or 0) for txn in transactions),
-                    "premium": sum(float(txn.premium or 0) for txn in transactions),
-                    "count": len(transactions),
-                },
-            },
-        )
+        pdf_bytes = _build_pdf_report(title, dataset)
         return send_file(
             BytesIO(pdf_bytes),
             mimetype="application/pdf",
@@ -268,32 +291,147 @@ def commission_sheet():
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(
-        [
-            "Date",
-            "Producer",
-            "Workspace",
-            "Policy",
-            "Category",
-            "Premium",
-            "Commission",
-            "Split",
-            "Status",
-        ]
-    )
-    for txn in transactions:
-        row = _commission_row(txn)
+    writer.writerow([column["label"] for column in columns])
+    for row in table_rows:
         writer.writerow(
             [
-                row["date"],
-                row["producer"],
-                row["workspace"],
-                row["policy"],
-                row["category"],
-                f"{row['premium']:.2f}",
-                f"{row['commission']:.2f}",
-                row["split"],
-                row["status"],
+                _format_csv_value(row, column)
+                for column in columns
+            ]
+        )
+    output.seek(0)
+    return send_file(
+        BytesIO(output.getvalue().encode("utf-8")),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"{filename}.csv",
+    )
+
+
+@reports_bp.route("/production-summary")
+@login_required
+def production_summary():
+    fmt = (request.args.get("format") or "csv").lower()
+    producer_id = request.args.get("producer_id", type=int)
+
+    workspace_ids = get_accessible_workspace_ids(current_user)
+
+    producer = None
+    if producer_id:
+        producer = Producer.query.filter_by(
+            id=producer_id,
+            org_id=current_user.org_id,
+        ).first_or_404()
+        if (
+            current_user.role == "agent"
+            and workspace_ids
+            and producer.workspace_id not in workspace_ids
+        ):
+            abort(403)
+
+    query = CommissionTransaction.query.filter_by(org_id=current_user.org_id)
+    if workspace_ids:
+        query = query.filter(
+            or_(
+                CommissionTransaction.workspace_id.in_(workspace_ids),
+                CommissionTransaction.batch.has(ImportBatch.workspace_id.in_(workspace_ids)),
+            )
+        )
+    if producer:
+        query = query.filter(CommissionTransaction.producer_id == producer.id)
+
+    transactions = query.order_by(CommissionTransaction.txn_date.asc()).all()
+
+    aggregates = {}
+    for txn in transactions:
+        key = txn.producer_id or 0
+        if key not in aggregates:
+            producer_name = txn.producer.display_name if txn.producer else "Unassigned"
+            workspace_name = "Unassigned"
+            if txn.producer and txn.producer.workspace:
+                workspace_name = txn.producer.workspace.name
+            elif txn.workspace:
+                workspace_name = txn.workspace.name
+            elif txn.batch and txn.batch.workspace:
+                workspace_name = txn.batch.workspace.name
+            aggregates[key] = {
+                "producer": producer_name,
+                "workspace": workspace_name,
+                "premium": 0.0,
+                "commission": 0.0,
+                "sales": 0,
+            }
+        aggregates[key]["premium"] += float(txn.premium or 0)
+        aggregates[key]["commission"] += float(txn.amount or 0)
+        aggregates[key]["sales"] += 1
+
+    table_rows = [
+        {
+            "producer": data["producer"],
+            "workspace": data["workspace"],
+            "premium": round(data["premium"], 2),
+            "commission": round(data["commission"], 2),
+            "sales": data["sales"],
+        }
+        for data in aggregates.values()
+    ]
+
+    table_rows.sort(key=lambda row: row["premium"], reverse=True)
+
+    summary = {
+        "commission": sum(row["commission"] for row in table_rows),
+        "premium": sum(row["premium"] for row in table_rows),
+        "count": sum(row["sales"] for row in table_rows),
+    }
+
+    columns = [
+        {"key": "producer", "label": "Producer"},
+        {"key": "workspace", "label": "Workspace"},
+        {"key": "premium", "label": "Total premium", "format": "currency"},
+        {"key": "commission", "label": "Total commission", "format": "currency"},
+        {"key": "sales", "label": "Sales"},
+    ]
+
+    org_name = (
+        current_user.organization.name
+        if getattr(current_user, "organization", None) and current_user.organization
+        else f"Org {current_user.org_id}"
+    )
+
+    title = (
+        f"Production summary — {producer.display_name}"
+        if producer
+        else f"Production summary — {org_name}"
+    )
+    filename = (
+        f"production_summary_{producer.display_name.lower().replace(' ', '_')}"
+        if producer
+        else "production_summary_all"
+    )
+
+    dataset = {
+        "table": table_rows,
+        "summary": summary,
+        "columns": columns,
+    }
+
+    if fmt == "pdf":
+        pdf_bytes = _build_pdf_report(title, dataset)
+        return send_file(
+            BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{filename}.pdf",
+        )
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([column["label"] for column in columns])
+    for row in table_rows:
+        writer.writerow(
+            [
+                _format_csv_value(row, column)
+                for column in columns
             ]
         )
     output.seek(0)
@@ -461,17 +599,44 @@ def _parse_date(raw):
 def _build_pdf_report(title, dataset):
     summary = dataset.get("summary", {})
     table = dataset.get("table", [])
+    columns = dataset.get("columns", [])
 
-    lines = [title, ""]
-    lines.append(f"Total commission: ${summary.get('commission', 0):.2f}")
-    lines.append(f"Total premium: ${summary.get('premium', 0):.2f}")
-    lines.append(f"Transactions: {summary.get('count', 0)}")
-    lines.append("")
+    generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
-    for row in table[:40]:
-        lines.append(
-            f"{row.get('date')} · {row.get('producer')} · ${row.get('commission', 0):.2f}"
-        )
+    lines = [
+        "TrackYourSheets",
+        title,
+        f"Generated on {generated_at}",
+        "",
+        f"Total commission: ${summary.get('commission', 0):.2f}",
+        f"Total premium: ${summary.get('premium', 0):.2f}",
+        f"Sales recorded: {summary.get('count', 0)}",
+        "",
+    ]
+
+    if columns:
+        header_line = " | ".join(column["label"] for column in columns)
+        lines.append(header_line)
+        lines.append("-" * len(header_line))
+        for row in table[:40]:
+            rendered_cells = []
+            for column in columns:
+                key = column["key"]
+                value = row.get(key)
+                if column.get("format") == "currency" and value is not None:
+                    rendered_cells.append(f"${float(value):.2f}")
+                else:
+                    rendered_cells.append(str(value) if value not in {None, ""} else "—")
+            lines.append(" | ".join(rendered_cells))
+    else:
+        for row in table[:40]:
+            if isinstance(row, dict):
+                summary_line = " · ".join(
+                    f"{key}: {value}" for key, value in row.items()
+                )
+                lines.append(summary_line)
+            else:
+                lines.append(str(row))
 
     return _text_to_pdf_bytes(lines)
 
@@ -565,6 +730,18 @@ def _commission_row(txn):
         "link": url_for("reports.activity_detail", txn_id=txn.id),
     }
     return row
+
+
+def _format_csv_value(row, column):
+    value = row.get(column["key"])
+    if value is None:
+        return ""
+    if column.get("format") == "currency":
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return "0.00"
+    return value
 
 
 def _fetch_status_categories(org_id: int):
