@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+{% block title %}{{ producer.display_name }} · Sales · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">{{ producer.display_name }}</h1>
+    <p class="text-muted mb-0">Workspace: {{ producer.workspace.name if producer.workspace else 'Unassigned' }} · Default split {{ producer.default_split }}%</p>
+  </div>
+  <div class="btn-group">
+    <a class="btn btn-outline-secondary" href="{{ url_for('admin.leaderboard') }}">Back to leaderboard</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('reports.commission_sheet', producer_id=producer.id) }}">Download statement</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-uppercase small text-muted">Commission</div>
+        <div class="display-6 fw-semibold">${{ '%.2f'|format(totals.commission) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-uppercase small text-muted">Premium</div>
+        <div class="display-6 fw-semibold">${{ '%.2f'|format(totals.premium) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-uppercase small text-muted">Sales</div>
+        <div class="display-6 fw-semibold">{{ totals.count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<form method="get" class="card shadow-sm mb-4">
+  <div class="card-header bg-light">
+    <h2 class="h6 mb-0">Filter sales</h2>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Category</label>
+        <select class="form-select" name="category">
+          <option value="">All</option>
+          {% for category in categories %}
+          <option value="{{ category }}" {% if active_filters.category and active_filters.category.lower() == category.lower() %}selected{% endif %}>{{ category }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Product type</label>
+        <select class="form-select" name="product_type">
+          <option value="">All</option>
+          {% for product_type in product_types %}
+          <option value="{{ product_type }}" {% if active_filters.product_type and active_filters.product_type.lower() == product_type.lower() %}selected{% endif %}>{{ product_type }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Status</label>
+        <select class="form-select" name="status">
+          <option value="">All</option>
+          {% for status in statuses %}
+          <option value="{{ status }}" {% if active_filters.status and active_filters.status.lower() == status.lower() %}selected{% endif %}>{{ status }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-footer d-flex justify-content-between align-items-center">
+    <div class="text-muted small">Showing {{ totals.count }} sale{{ '' if totals.count == 1 else 's' }}.</div>
+    <div class="btn-group">
+      <button class="btn btn-outline-secondary" type="submit" name="clear" value="1">Reset</button>
+      <button class="btn btn-primary" type="submit">Apply filters</button>
+    </div>
+  </div>
+</form>
+
+<form method="post" action="{{ url_for('admin.apply_commission_override') }}" class="card shadow-sm">
+  <input type="hidden" name="return_url" value="{{ request.full_path }}">
+  <div class="card-header bg-light d-flex flex-column flex-lg-row justify-content-lg-between align-items-lg-center gap-3">
+    <h2 class="h6 mb-0">Sales activity</h2>
+    <div class="d-flex flex-wrap gap-2">
+      <select class="form-select form-select-sm" name="override_mode" required>
+        <option value="flat">Set flat commission ($)</option>
+        <option value="percent">Apply % of premium</option>
+        <option value="split">Update split %</option>
+      </select>
+      <input type="number" step="0.01" class="form-control form-control-sm" name="override_value" placeholder="Value" required>
+      <input type="text" class="form-control form-control-sm" name="notes" placeholder="Reason (optional)">
+      <button class="btn btn-sm btn-primary" type="submit">Apply to selected</button>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-striped align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th scope="col"><input type="checkbox" class="form-check-input" data-batch-toggle="txns"></th>
+          <th scope="col">Date</th>
+          <th scope="col">Policy</th>
+          <th scope="col">Category</th>
+          <th scope="col">Premium</th>
+          <th scope="col">Commission</th>
+          <th scope="col">Split</th>
+          <th scope="col">Status</th>
+          <th scope="col">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if transactions %}
+        {% for txn in transactions %}
+        <tr>
+          <td><input type="checkbox" class="form-check-input" name="transaction_ids" value="{{ txn.id }}"></td>
+          <td>{{ txn.txn_date.strftime('%Y-%m-%d') if txn.txn_date else '—' }}</td>
+          <td>
+            <div class="fw-semibold">{{ txn.policy.policy_number if txn.policy else '—' }}</div>
+            <div class="small text-muted">{{ txn.carrier_name or (txn.policy.carrier.name if txn.policy and txn.policy.carrier) }}</div>
+          </td>
+          <td>{{ txn.category or '—' }}</td>
+          <td>${{ '%.2f'|format(txn.premium or 0) }}</td>
+          <td>
+            <div class="fw-semibold">${{ '%.2f'|format(txn.amount or 0) }}</div>
+            {% if txn.manual_amount %}
+            <div class="badge bg-warning-soft text-warning small">Manual override</div>
+            {% endif %}
+          </td>
+          <td>{{ txn.split_pct or txn.manual_split_pct or '—' }}%</td>
+          <td>
+            {{ txn.status or '—' }}
+            {% if txn.override_source %}
+            <div class="small text-muted">{{ txn.override_source.replace('_', ' ') }} · {{ txn.override_applied_at.strftime('%Y-%m-%d %H:%M') if txn.override_applied_at }}</div>
+            {% endif %}
+          </td>
+          <td class="small text-muted">
+            {% if txn.overrides %}
+            <div class="fw-semibold">{{ txn.overrides[-1].notes or 'Override applied' }}</div>
+            {% endif %}
+            {{ txn.notes or '' }}
+          </td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr>
+          <td colspan="9" class="text-center text-muted py-4">No sales match the current filters.</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+{% endblock %}
+{% block extra_scripts %}
+{{ super() }}
+<script>
+  const toggle = document.querySelector('[data-batch-toggle="txns"]');
+  if (toggle) {
+    toggle.addEventListener('change', (event) => {
+      document.querySelectorAll('input[name="transaction_ids"]').forEach((box) => {
+        box.checked = event.target.checked;
+      });
+    });
+  }
+</script>
+{% endblock %}

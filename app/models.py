@@ -30,6 +30,7 @@ class Organization(TimestampMixin, db.Model):
     import_batches = db.relationship("ImportBatch", backref="organization", lazy=True)
     commission_transactions = db.relationship("CommissionTransaction", backref="organization", lazy=True)
     payout_statements = db.relationship("PayoutStatement", backref="organization", lazy=True)
+    categories = db.relationship("CategoryTag", backref="organization", lazy=True)
 
 
 class SubscriptionPlan(db.Model):
@@ -261,6 +262,11 @@ class CommissionTransaction(TimestampMixin, db.Model):
     source = db.Column(db.String(16), default="import")
     status = db.Column(db.String(32), default="provisional")
     notes = db.Column(db.Text)
+    manual_amount = db.Column(db.Numeric(12, 2))
+    manual_split_pct = db.Column(db.Numeric(5, 2))
+    override_source = db.Column(db.String(32))
+    override_applied_at = db.Column(db.DateTime)
+    override_applied_by = db.Column(db.Integer, db.ForeignKey("users.id"))
 
     batch = db.relationship(
         "ImportBatch", backref="commission_transactions", foreign_keys=[batch_id]
@@ -270,6 +276,50 @@ class CommissionTransaction(TimestampMixin, db.Model):
     )
     creator = db.relationship(
         "User", backref="commission_transactions_created", foreign_keys=[created_by]
+    )
+    override_actor = db.relationship(
+        "User",
+        backref="commission_overrides_applied",
+        foreign_keys=[override_applied_by],
+    )
+    overrides = db.relationship(
+        "CommissionOverride",
+        backref="transaction",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+
+
+class CommissionOverride(TimestampMixin, db.Model):
+    __tablename__ = "commission_overrides"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    transaction_id = db.Column(db.Integer, db.ForeignKey("commission_txns.id"), nullable=False)
+    override_type = db.Column(db.String(16), nullable=False)
+    flat_amount = db.Column(db.Numeric(12, 2))
+    percent = db.Column(db.Numeric(5, 2))
+    split_pct = db.Column(db.Numeric(5, 2))
+    applied_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    notes = db.Column(db.Text)
+    applied_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    applier = db.relationship(
+        "User", backref="commission_overrides", foreign_keys=[applied_by]
+    )
+
+
+class CategoryTag(TimestampMixin, db.Model):
+    __tablename__ = "category_tags"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    name = db.Column(db.String(64), nullable=False)
+    kind = db.Column(db.String(32), nullable=False, default="line")
+    is_default = db.Column(db.Boolean, default=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("org_id", "name", "kind", name="uq_category_tag"),
     )
 
 
@@ -343,6 +393,19 @@ class APIKey(TimestampMixin, db.Model):
     token_hash = db.Column(db.String(128), nullable=False)
     label = db.Column(db.String(120), nullable=False)
     scopes = db.Column(db.JSON, default=list)
+    token_prefix = db.Column(db.String(16))
+    token_last4 = db.Column(db.String(4))
+    revoked_at = db.Column(db.DateTime)
+
+    @property
+    def is_active(self) -> bool:
+        return self.revoked_at is None
+
+    @property
+    def masked_token(self) -> str:
+        if self.token_last4:
+            return f"•••• {self.token_last4}"
+        return "Not available"
 
 
 class AuditLog(TimestampMixin, db.Model):

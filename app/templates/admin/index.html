@@ -102,8 +102,12 @@
 <div class="row g-4 mt-1">
   <div class="col-xl-6">
     <div class="card shadow-sm h-100">
-      <div class="card-header bg-light">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h2 class="h6 mb-0">Producers</h2>
+        <div class="btn-group">
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.leaderboard') }}">Leaderboard</a>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.manage_categories') }}">Categories</a>
+        </div>
       </div>
       <div class="list-group list-group-flush">
         {% for producer in producers %}
@@ -146,6 +150,33 @@
   <div class="col-xl-6">
     <div class="card shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Knowledge base</h2>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.how_to') }}">Open guide</a>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">Step-by-step instructions for agents, producers, bookkeepers, auditors, admins, and read-only teammates are embedded directly in the app.</p>
+        <p class="text-muted small mb-0">Bookmark the guide so new hires can onboard themselves in minutes.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Analytics</h2>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('reports.analytics_dashboard') }}">View charts</a>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">Interactive charts update instantly as you filter by category, business type, producer, team, and period.</p>
+        <p class="text-muted small mb-0">Export filtered datasets as CSV or PDF to share performance snapshots with leadership.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h2 class="h6 mb-0">Commission rulesets</h2>
         <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createRulesetModal">New ruleset</button>
       </div>
@@ -172,16 +203,42 @@
         <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#createApiKeyModal">Generate</button>
         {% endif %}
       </div>
+      {% if revealed_api_key %}
+      <div class="alert alert-success border-0 rounded-0 mb-0">
+        <div class="fw-semibold">New API key created — copy or download it now.</div>
+        <p class="small mb-2">This token will not be displayed again after you leave this page.</p>
+        <div class="input-group input-group-sm">
+          <input type="text" class="form-control" value="{{ revealed_api_key.token }}" readonly>
+          <a class="btn btn-outline-primary" href="{{ url_for('admin.download_api_key', key_id=revealed_api_key.id) }}">Download .txt</a>
+        </div>
+      </div>
+      {% endif %}
       <div class="list-group list-group-flush">
         {% if api_keys %}
         {% for key in api_keys %}
         <div class="list-group-item">
-          <div class="d-flex justify-content-between align-items-center">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
             <div>
-              <div class="fw-semibold">{{ key.label }}</div>
-              <div class="text-muted small">Scopes: {{ key.scopes|join(', ') }}</div>
+              <div class="fw-semibold d-flex align-items-center gap-2">
+                <span>{{ key.label }}</span>
+                {% if not key.is_active %}
+                <span class="badge bg-danger-soft text-danger">Revoked</span>
+                {% endif %}
+              </div>
+              <div class="text-muted small">Scopes: {{ (key.scopes or [])|join(', ') or '—' }}</div>
+              <div class="text-muted small">Key: {{ key.masked_token }}</div>
+              <div class="text-muted small">Created {{ key.created_at.strftime('%b %d, %Y') }}</div>
             </div>
-            <span class="badge bg-secondary">Token stored securely</span>
+            <div class="d-flex align-items-center gap-2">
+              {% if key.is_active and (key.id|string) in downloadable_api_keys %}
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.download_api_key', key_id=key.id) }}">Download .txt</a>
+              {% endif %}
+              {% if key.is_active and current_user.role in ['owner', 'admin'] %}
+              <form method="post" action="{{ url_for('admin.revoke_api_key', key_id=key.id) }}" onsubmit="return confirm('Revoke this API key? Integrations using it will stop working.');">
+                <button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
+              </form>
+              {% endif %}
+            </div>
           </div>
         </div>
         {% endfor %}

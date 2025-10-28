@@ -1,7 +1,7 @@
 import csv
 import io
 import os
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 
 from flask import (
@@ -25,6 +25,7 @@ from .models import (
     ImportBatch,
     ImportRow,
     Producer,
+    CategoryTag,
     Workspace,
 )
 from .nylas_email import send_import_notification
@@ -40,21 +41,16 @@ from .workspaces import (
 imports_bp = Blueprint("imports", __name__)
 
 
-CATEGORY_CHOICES = [
-    "auto",
-    "home",
-    "life",
-    "health",
-    "business",
-    "commercial_auto",
-    "property",
-    "financial",
-    "raw",
-    "recurring",
-    "bonus",
-    "fee",
-    "other",
-]
+
+def _get_category_choices(org_id: int):
+    tags = (
+        CategoryTag.query.filter_by(org_id=org_id, kind="status")
+        .order_by(CategoryTag.is_default.desc(), CategoryTag.name.asc())
+        .all()
+    )
+    if tags:
+        return [tag.name for tag in tags]
+    return ["Auto", "Home", "Renters", "Life", "Raw", "Existing", "Renewal"]
 
 def _allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in {"csv"}
@@ -153,7 +149,7 @@ def detail(batch_id: int):
         batch=batch,
         totals=totals,
         producer_breakdown=per_producer,
-        categories=CATEGORY_CHOICES,
+        categories=_get_category_choices(current_user.org_id),
     )
 
 
@@ -171,6 +167,9 @@ def manual_entry():
         .all()
     )
     producers = get_accessible_producers(current_user)
+
+    raw_category_choices = _get_category_choices(current_user.org_id)
+    category_choices = {_safe_str(value) for value in raw_category_choices}
 
     if request.method == "POST":
         workspace_id = request.form.get("workspace_id")
@@ -228,7 +227,10 @@ def manual_entry():
 
         category = request.form.get("category") or "raw"
         category_normalized = _safe_str(category)
-        category_value = category_normalized if category_normalized in CATEGORY_CHOICES else (category_normalized or "other")
+        if category_normalized not in category_choices:
+            category_value = category_normalized or "other"
+        else:
+            category_value = category_normalized
 
         txn = CommissionTransaction(
             org_id=current_user.org_id,
@@ -254,18 +256,18 @@ def manual_entry():
         flash("Manual commission recorded.", "success")
         return redirect(url_for("reports.overview"))
 
+    categories = _get_category_choices(current_user.org_id)
     return render_template(
         "imports/manual.html",
         workspaces=workspaces,
         carriers=carriers,
         producers=producers,
-        categories=CATEGORY_CHOICES,
+        categories=raw_category_choices,
         current_date=datetime.utcnow().date().isoformat(),
     )
 @imports_bp.route("/upload", methods=["POST"])
 @login_required
 def upload():
-    period_month = request.form.get("period_month")
     workspace_id_raw = request.form.get("workspace_id")
     workspace_id = int(workspace_id_raw) if workspace_id_raw else None
     file = request.files.get("statement")
@@ -275,8 +277,8 @@ def upload():
         flash("Select a valid workspace for this upload.", "danger")
         return redirect(url_for("imports.index"))
 
-    if not period_month or not file:
-        flash("Statement period and file are required.", "danger")
+    if not file:
+        flash("Statement file is required.", "danger")
         return redirect(url_for("imports.index"))
 
     if not _allowed_file(file.filename):
@@ -312,6 +314,7 @@ def upload():
     accessible_producers = get_accessible_producers(current_user)
     batches_created = []
     summary = []
+    derived_period = _derive_period_month(rows)
     for carrier_name, carrier_rows in _group_rows_by_carrier(rows, carrier_field).items():
         carrier = _resolve_carrier(carrier_name)
         batch_filename = f"{timestamp}_{_slugify(carrier_name)}.csv"
@@ -323,7 +326,7 @@ def upload():
             carrier_id=carrier.id,
             workspace_id=workspace.id,
             producer_id=current_user.producer.id if current_user.role == "producer" and current_user.producer else None,
-            period_month=period_month,
+            period_month=derived_period,
             source_type="csv",
             status="uploaded",
             created_by=current_user.id,
@@ -379,12 +382,16 @@ def upload():
             recipient=workspace.agent.email,
             workspace=workspace,
             uploader=current_user,
-            period=period_month,
+            period=derived_period,
             summary=summary,
         )
 
     flash(
-        "Import uploaded and routed by carrier." if batches_created else "No rows imported.",
+        (
+            f"Import uploaded for period {derived_period}."
+            if batches_created
+            else "No rows imported."
+        ),
         "success" if batches_created else "warning",
     )
     return redirect(url_for("imports.index"))
@@ -396,6 +403,44 @@ def _group_rows_by_carrier(rows, carrier_field):
         carrier_name = (row.get(carrier_field) or "Unspecified").strip()
         grouped.setdefault(carrier_name or "Unspecified", []).append(row)
     return grouped
+
+
+def _derive_period_month(rows):
+    dates = []
+    for row in rows:
+        for key, value in row.items():
+            if not key or value in (None, ""):
+                continue
+            key_lower = key.lower()
+            if any(term in key_lower for term in ["period", "month", "date", "effective", "written"]):
+                parsed = _parse_any_date(value)
+                if parsed:
+                    dates.append(parsed)
+                    break
+    if dates:
+        target = min(dates)
+    else:
+        target = datetime.utcnow().date()
+    return target.strftime("%Y-%m")
+
+
+def _parse_any_date(value):
+    if isinstance(value, (datetime, date)):
+        return value.date() if isinstance(value, datetime) else value
+    for fmt in [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%Y%m%d",
+        "%b %d %Y",
+        "%d %b %Y",
+    ]:
+        try:
+            return datetime.strptime(str(value), fmt).date()
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 def _resolve_carrier(carrier_name):
@@ -448,12 +493,39 @@ def _normalize_row(row, carrier_field):
         _first(["commission", "Commission", "Commission Amount", "Commission Total"])
     )
 
+    known_keys = {
+        carrier_field,
+        "premium",
+        "Premium",
+        "Written Premium",
+        "Total Premium",
+        "commission",
+        "Commission",
+        "Commission Amount",
+        "Commission Total",
+        "policy_number",
+        "Policy Number",
+        "Policy #",
+        "Policy",
+        "customer",
+        "Customer Name",
+        "Insured",
+        "Client",
+    }
+
+    additional = {
+        key: value
+        for key, value in row.items()
+        if key not in known_keys and value not in (None, "")
+    }
+
     return {
         "carrier": row.get(carrier_field),
         "policy_number": _first(["policy_number", "Policy Number", "Policy #", "Policy"]),
         "customer": _first(["customer", "Customer Name", "Insured", "Client"]),
         "premium": premium,
         "commission": commission,
+        "additional_data": additional,
     }
 
 
@@ -477,7 +549,7 @@ def _build_transaction(import_row, batch, workspace, carrier, accessible_produce
 
     txn_date = _parse_txn_date(raw) or datetime.utcnow().date()
     basis = _resolve_basis(raw, normalized)
-    category = _resolve_category(raw)
+    category = _resolve_category(raw, workspace.org_id if workspace else None)
     product_type = _resolve_product_type(raw, normalized)
     notes = _collect_notes(raw)
 
@@ -608,7 +680,10 @@ def _resolve_basis(raw, normalized):
     )
 
 
-def _resolve_category(raw):
+def _resolve_category(raw, org_id=None):
+    allowed = set()
+    if org_id:
+        allowed = {_safe_str(value) for value in _get_category_choices(org_id)}
     for key in [
         "category",
         "commission_type",
@@ -619,7 +694,7 @@ def _resolve_category(raw):
         value = raw.get(key)
         if value:
             normalized = _safe_str(value)
-            if normalized in CATEGORY_CHOICES:
+            if not allowed or normalized in allowed:
                 return normalized
             return normalized
     return "raw"

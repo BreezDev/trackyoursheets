@@ -162,12 +162,13 @@
             <input type="hidden" name="workspace_id" value="{{ workspaces[0].id }}">
             {% endif %}
             <div class="col-md-4">
-              <label class="form-label">Statement period</label>
-              <input type="month" name="period_month" class="form-control" required>
-            </div>
-            <div class="col-md-4">
               <label class="form-label">Source</label>
               <input type="text" class="form-control" value="CSV" disabled>
+            </div>
+            <div class="col-md-8">
+              <div class="alert alert-info border-0 small mb-0">
+                We automatically detect the reporting period from your file. The derived month appears in analytics and reports.
+              </div>
             </div>
             <div class="col-12">
               <label class="form-label">Files</label>

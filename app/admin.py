@@ -1,12 +1,33 @@
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+import hashlib
+import io
+import secrets
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+from flask import (
+    Blueprint,
+    flash,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 from flask_login import current_user, login_required
 
 from . import db
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+
 from .models import (
     APIKey,
     Carrier,
     CommissionRule,
     CommissionRuleSet,
+    CommissionTransaction,
+    CommissionOverride,
+    CategoryTag,
     Office,
     Organization,
     Producer,
@@ -15,6 +36,7 @@ from .models import (
     Workspace,
 )
 from .workspaces import get_accessible_workspaces, get_accessible_workspace_ids
+from .nylas_email import send_workspace_invitation
 
 
 admin_bp = Blueprint("admin", __name__)
@@ -55,7 +77,11 @@ def index():
             .all()
         )
         plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
-        api_keys = APIKey.query.filter_by(org_id=current_user.org_id).all()
+        api_keys = (
+            APIKey.query.filter_by(org_id=current_user.org_id)
+            .order_by(APIKey.created_at.desc())
+            .all()
+        )
     else:
         workspaces = get_accessible_workspaces(current_user)
         unique_offices = {ws.office for ws in workspaces if ws and ws.office}
@@ -88,6 +114,18 @@ def index():
             .order_by(Producer.display_name.asc())
             .all()
         )
+    api_key_tokens = session.get("api_key_tokens", {})
+    new_key_id = request.args.get("new_key_id")
+    revealed_api_key = None
+    if new_key_id and new_key_id in api_key_tokens:
+        key_obj = next((key for key in api_keys if str(key.id) == new_key_id), None)
+        if key_obj:
+            revealed_api_key = {
+                "id": key_obj.id,
+                "label": key_obj.label,
+                "token": api_key_tokens[new_key_id],
+            }
+
     return render_template(
         "admin/index.html",
         org=org,
@@ -100,6 +138,8 @@ def index():
         api_keys=api_keys,
         plans=plans,
         accessible_workspace_ids=workspace_ids,
+        revealed_api_key=revealed_api_key,
+        downloadable_api_keys=set(api_key_tokens.keys()),
     )
 
 
@@ -125,6 +165,7 @@ def create_user():
         return redirect(url_for("admin.index"))
 
     target_workspace = None
+    invited_workspace = None
     if role in {"agent", "producer"}:
         accessible_ids = set(get_accessible_workspace_ids(current_user))
         if workspace_id is None:
@@ -164,6 +205,7 @@ def create_user():
             display_name=display_name or email.split("@")[0],
         )
         db.session.add(producer)
+        invited_workspace = target_workspace
     elif role == "agent" and target_workspace:
         if target_workspace.agent_id and target_workspace.agent_id != user.id:
             flash("Workspace already has an agent assigned.", "warning")
@@ -173,8 +215,16 @@ def create_user():
         if existing and existing.id != target_workspace.id:
             existing.agent_id = None
         target_workspace.agent_id = user.id
+        invited_workspace = target_workspace
 
     db.session.commit()
+    if invited_workspace and email:
+        send_workspace_invitation(
+            recipient=email,
+            inviter=current_user,
+            workspace=invited_workspace,
+            role=role,
+        )
     flash(f"{role.title()} user created.", "success")
     return redirect(url_for("admin.index"))
 
@@ -356,14 +406,451 @@ def delete_rule(rule_id):
 
 @admin_bp.route("/api-keys", methods=["POST"])
 def create_api_key():
+    if current_user.role not in {"owner", "admin"}:
+        flash("Only owners and admins can create API keys.", "danger")
+        return redirect(url_for("admin.index"))
+
     label = request.form.get("label")
     if not label:
         flash("Label required.", "danger")
         return redirect(url_for("admin.index"))
 
-    token_hash = f"demo-{label}"  # Placeholder for secure hashing implementation
-    key = APIKey(org_id=current_user.org_id, label=label, token_hash=token_hash, scopes=["imports", "reports"])
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    key = APIKey(
+        org_id=current_user.org_id,
+        label=label,
+        token_hash=token_hash,
+        token_prefix=raw_token[:8],
+        token_last4=raw_token[-4:],
+        scopes=["imports", "reports"],
+    )
     db.session.add(key)
     db.session.commit()
-    flash("API key placeholder created. Update with secure token before production.", "warning")
+    token_store = session.get("api_key_tokens", {})
+    token_store[str(key.id)] = raw_token
+    session["api_key_tokens"] = token_store
+    session.modified = True
+    flash("API key generated. Copy or download it now; it will not be shown again.", "success")
+    return redirect(url_for("admin.index", new_key_id=key.id))
+
+
+@admin_bp.route("/api-keys/<int:key_id>/download")
+def download_api_key(key_id: int):
+    if current_user.role not in {"owner", "admin"}:
+        flash("You do not have access to this API key.", "danger")
+        return redirect(url_for("admin.index"))
+
+    token_store = session.get("api_key_tokens", {})
+    token = token_store.get(str(key_id))
+    if not token:
+        flash("API keys can only be downloaded immediately after creation.", "warning")
+        return redirect(url_for("admin.index"))
+
+    key = APIKey.query.filter_by(id=key_id, org_id=current_user.org_id).first_or_404()
+    if not key.is_active:
+        flash("This API key has been revoked and cannot be downloaded.", "danger")
+        return redirect(url_for("admin.index"))
+
+    filename = f"{key.label.lower().replace(' ', '_')}_api_key.txt"
+    content = (
+        "TrackYourSheets API key\n"
+        f"Label: {key.label}\n"
+        f"Token: {token}\n"
+        f"Generated: {key.created_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+    )
+    buffer = io.BytesIO(content.encode("utf-8"))
+    token_store.pop(str(key_id), None)
+    session["api_key_tokens"] = token_store
+    session.modified = True
+    return send_file(
+        buffer,
+        mimetype="text/plain",
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+@admin_bp.route("/api-keys/<int:key_id>/revoke", methods=["POST"])
+def revoke_api_key(key_id: int):
+    if current_user.role not in {"owner", "admin"}:
+        flash("Only owners and admins can revoke API keys.", "danger")
+        return redirect(url_for("admin.index"))
+
+    key = APIKey.query.filter_by(id=key_id, org_id=current_user.org_id).first_or_404()
+    if not key.is_active:
+        flash("API key already revoked.", "info")
+        return redirect(url_for("admin.index"))
+
+    key.revoked_at = datetime.utcnow()
+    db.session.add(key)
+    db.session.commit()
+    token_store = session.get("api_key_tokens", {})
+    if str(key_id) in token_store:
+        token_store.pop(str(key_id), None)
+        session["api_key_tokens"] = token_store
+        session.modified = True
+    flash("API key revoked.", "success")
     return redirect(url_for("admin.index"))
+
+
+@admin_bp.route("/leaderboard")
+def leaderboard():
+    workspace_ids = get_accessible_workspace_ids(current_user)
+    txn_query = CommissionTransaction.query.filter_by(org_id=current_user.org_id)
+    if workspace_ids:
+        txn_query = txn_query.filter(
+            CommissionTransaction.workspace_id.in_(workspace_ids)
+        )
+
+    totals = (
+        txn_query.with_entities(
+            CommissionTransaction.producer_id,
+            func.coalesce(func.sum(CommissionTransaction.amount), 0),
+            func.coalesce(func.sum(CommissionTransaction.premium), 0),
+            func.count(CommissionTransaction.id),
+        )
+        .group_by(CommissionTransaction.producer_id)
+        .all()
+    )
+
+    producer_ids = [row[0] for row in totals if row[0]]
+    producers = {}
+    if producer_ids:
+        producers = {
+            producer.id: producer
+            for producer in Producer.query.filter(
+                Producer.id.in_(producer_ids),
+                Producer.org_id == current_user.org_id,
+            ).all()
+        }
+
+    rows = []
+    unassigned = next((row for row in totals if row[0] is None), None)
+    for producer_id, commission_sum, premium_sum, txn_count in totals:
+        producer_obj = producers.get(producer_id)
+        rows.append(
+            {
+                "producer": producer_obj,
+                "producer_id": producer_id,
+                "display_name": producer_obj.display_name if producer_obj else "Unassigned",
+                "workspace": producer_obj.workspace.name if producer_obj and producer_obj.workspace else "—",
+                "commission": float(commission_sum or 0),
+                "premium": float(premium_sum or 0),
+                "transactions": int(txn_count or 0),
+            }
+        )
+
+    rows.sort(key=lambda item: item["commission"], reverse=True)
+
+    return render_template(
+        "admin/leaderboard.html",
+        leaderboard=rows,
+        accessible_workspace_ids=workspace_ids,
+        unassigned=unassigned,
+    )
+
+
+@admin_bp.route("/leaderboard/<int:producer_id>")
+def producer_sales(producer_id: int):
+    producer = Producer.query.filter_by(
+        id=producer_id, org_id=current_user.org_id
+    ).first_or_404()
+
+    workspace_ids = get_accessible_workspace_ids(current_user)
+    if current_user.role == "agent" and workspace_ids and producer.workspace_id not in workspace_ids:
+        flash("You do not have access to this producer's transactions.", "danger")
+        return redirect(url_for("admin.leaderboard"))
+
+    if request.args.get("clear"):
+        return redirect(url_for("admin.producer_sales", producer_id=producer.id))
+
+    category_filter = request.args.get("category")
+    product_filter = request.args.get("product_type")
+    status_filter = request.args.get("status")
+
+    txn_query = CommissionTransaction.query.filter_by(
+        org_id=current_user.org_id, producer_id=producer.id
+    )
+    if workspace_ids:
+        txn_query = txn_query.filter(
+            CommissionTransaction.workspace_id.in_(workspace_ids)
+        )
+    if category_filter:
+        txn_query = txn_query.filter(
+            func.lower(CommissionTransaction.category) == category_filter.lower()
+        )
+    if product_filter:
+        txn_query = txn_query.filter(
+            func.lower(CommissionTransaction.product_type) == product_filter.lower()
+        )
+    if status_filter:
+        txn_query = txn_query.filter(
+            func.lower(CommissionTransaction.status) == status_filter.lower()
+        )
+
+    transactions = (
+        txn_query.order_by(CommissionTransaction.txn_date.desc(), CommissionTransaction.id.desc())
+        .limit(500)
+        .all()
+    )
+
+    totals = {
+        "commission": sum(float(txn.amount or 0) for txn in transactions),
+        "premium": sum(float(txn.premium or 0) for txn in transactions),
+        "count": len(transactions),
+    }
+
+    categories = _get_category_names(current_user.org_id)
+    product_types = sorted(
+        {txn.product_type for txn in transactions if txn.product_type}
+    )
+    statuses = sorted({txn.status for txn in transactions if txn.status})
+
+    return render_template(
+        "admin/producer_sales.html",
+        producer=producer,
+        transactions=transactions,
+        totals=totals,
+        categories=categories,
+        product_types=product_types,
+        statuses=statuses,
+        active_filters={
+            "category": category_filter,
+            "product_type": product_filter,
+            "status": status_filter,
+        },
+    )
+
+
+@admin_bp.route("/commission-overrides/apply", methods=["POST"])
+def apply_commission_override():
+    txn_ids = request.form.getlist("transaction_ids")
+    override_mode = request.form.get("override_mode")
+    override_value_raw = request.form.get("override_value")
+    notes = request.form.get("notes") or None
+    return_to = (
+        request.form.get("return_url")
+        or request.referrer
+        or url_for("admin.leaderboard")
+    )
+
+    if not txn_ids:
+        flash("Select at least one transaction to override.", "warning")
+        return redirect(return_to)
+
+    if override_mode not in {"flat", "percent", "split"}:
+        flash("Choose a valid override type.", "danger")
+        return redirect(return_to)
+
+    try:
+        override_value = Decimal(override_value_raw)
+    except (InvalidOperation, TypeError):
+        flash("Enter a valid numeric override value.", "danger")
+        return redirect(return_to)
+
+    txn_query = CommissionTransaction.query.filter(
+        CommissionTransaction.id.in_(txn_ids),
+        CommissionTransaction.org_id == current_user.org_id,
+    )
+    transactions = txn_query.all()
+
+    if not transactions:
+        flash("No matching transactions found for override.", "danger")
+        return redirect(return_to)
+
+    accessible_ids = set(get_accessible_workspace_ids(current_user))
+    applied = 0
+    now = datetime.utcnow()
+
+    def _to_decimal(value):
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+
+    for txn in transactions:
+        if current_user.role == "agent" and accessible_ids and txn.workspace_id not in accessible_ids:
+            continue
+
+        override = CommissionOverride(
+            org_id=current_user.org_id,
+            transaction_id=txn.id,
+            override_type=override_mode,
+            applied_by=current_user.id,
+            notes=notes,
+            applied_at=now,
+        )
+
+        if override_mode == "flat":
+            override.flat_amount = override_value
+            txn.manual_amount = override_value
+            txn.amount = override_value
+            txn.commission = override_value
+            txn.override_source = "manual_flat"
+        elif override_mode == "percent":
+            override.percent = override_value
+            base = txn.premium or txn.amount or txn.commission
+            if base is not None:
+                calculated = _to_decimal(base) * (override_value / Decimal("100"))
+                txn.amount = calculated
+                txn.manual_amount = calculated
+                txn.commission = calculated
+            txn.override_source = "manual_percent"
+        elif override_mode == "split":
+            override.split_pct = override_value
+            txn.manual_split_pct = override_value
+            txn.split_pct = override_value
+            base = txn.commission if txn.commission is not None else txn.amount
+            if base is None and txn.premium is not None:
+                base = txn.premium
+            if base is not None:
+                calculated = _to_decimal(base) * (override_value / Decimal("100"))
+                txn.amount = calculated
+                txn.manual_amount = calculated
+                txn.commission = calculated
+            txn.override_source = "manual_split"
+
+        txn.override_applied_at = now
+        txn.override_applied_by = current_user.id
+        db.session.add(override)
+        db.session.add(txn)
+        applied += 1
+
+    if not applied:
+        flash("No transactions were updated. Check your permissions.", "warning")
+        return redirect(return_to)
+
+    db.session.commit()
+    flash(f"Applied overrides to {applied} transaction(s).", "success")
+    return redirect(return_to)
+
+
+@admin_bp.route("/categories", methods=["GET", "POST"])
+def manage_categories():
+    if request.method == "POST":
+        name = (request.form.get("name") or "").strip()
+        kind = request.form.get("kind") or "status"
+        if not name:
+            flash("Category name is required.", "danger")
+            return redirect(url_for("admin.manage_categories"))
+        tag = CategoryTag(
+            org_id=current_user.org_id,
+            name=name,
+            kind=kind,
+            is_default=False,
+        )
+        db.session.add(tag)
+        try:
+            db.session.commit()
+            flash("Category added.", "success")
+        except IntegrityError:
+            db.session.rollback()
+            flash("Category already exists for this organization.", "warning")
+        return redirect(url_for("admin.manage_categories"))
+
+    categories = (
+        CategoryTag.query.filter_by(org_id=current_user.org_id)
+        .order_by(CategoryTag.kind.asc(), CategoryTag.name.asc())
+        .all()
+    )
+    return render_template("admin/categories.html", categories=categories)
+
+
+@admin_bp.route("/categories/<int:category_id>/update", methods=["POST"])
+def update_category(category_id: int):
+    tag = CategoryTag.query.filter_by(
+        id=category_id, org_id=current_user.org_id
+    ).first_or_404()
+    name = (request.form.get("name") or "").strip()
+    kind = request.form.get("kind") or tag.kind
+    if not name:
+        flash("Category name cannot be empty.", "danger")
+        return redirect(url_for("admin.manage_categories"))
+
+    tag.name = name
+    tag.kind = kind
+    try:
+        db.session.commit()
+        flash("Category updated.", "success")
+    except IntegrityError:
+        db.session.rollback()
+        flash("Another category already uses that name.", "warning")
+    return redirect(url_for("admin.manage_categories"))
+
+
+@admin_bp.route("/categories/<int:category_id>/delete", methods=["POST"])
+def delete_category(category_id: int):
+    tag = CategoryTag.query.filter_by(
+        id=category_id, org_id=current_user.org_id
+    ).first_or_404()
+    db.session.delete(tag)
+    db.session.commit()
+    flash("Category removed.", "info")
+    return redirect(url_for("admin.manage_categories"))
+
+
+@admin_bp.route("/how-to")
+def how_to():
+    sections = _build_how_to_sections()
+    return render_template("admin/how_to.html", sections=sections)
+
+
+def _get_category_names(org_id: int):
+    tags = (
+        CategoryTag.query.filter_by(org_id=org_id, kind="status")
+        .order_by(CategoryTag.name.asc())
+        .all()
+    )
+    return [tag.name for tag in tags]
+
+
+def _build_how_to_sections():
+    return [
+        {
+            "title": "Agents",
+            "entries": [
+                "Assign producers to workspaces and configure commission splits.",
+                "Review imports under the Imports tab and resolve unmatched rows.",
+                "Use the Producer Leaderboard to monitor progress and apply manual overrides when necessary.",
+            ],
+        },
+        {
+            "title": "Producers",
+            "entries": [
+                "Track recent sales activity from the dashboard and filter analytics for your book.",
+                "Download individualized commission statements from the Reports area.",
+                "Add context using sale notes so teammates understand adjustments and audit trails.",
+            ],
+        },
+        {
+            "title": "Bookkeepers",
+            "entries": [
+                "Export commission sheets per producer or for the full organization from Reports → Commission Sheets.",
+                "Use analytics filters to reconcile totals by line of business or carrier.",
+                "Leverage audit logs to validate overrides and payouts before sending statements.",
+            ],
+        },
+        {
+            "title": "Auditors",
+            "entries": [
+                "Open the Audit dashboard to review recent overrides, imports, and manual adjustments.",
+                "Filter transactions by status to surface records pending approval.",
+                "Export audit logs on demand for compliance reporting.",
+            ],
+        },
+        {
+            "title": "Admins",
+            "entries": [
+                "Manage billing, subscription limits, and global settings under Admin → Settings.",
+                "Invite team members and trigger automatic workspace emails for smooth onboarding.",
+                "Configure categories so agents and producers can filter every report consistently.",
+            ],
+        },
+        {
+            "title": "Read-only",
+            "entries": [
+                "Navigate dashboards and analytics with confidence using tooltips embedded across charts.",
+                "Access the How-To library anytime from the Admin console for quick reference.",
+            ],
+        },
+    ]

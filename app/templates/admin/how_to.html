@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}How-To Guide · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">TrackYourSheets playbook</h1>
+    <p class="text-muted mb-0">Every role gets a dedicated checklist with tips, shortcuts, and links to deeper documentation.</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.index') }}">Back to admin</a>
+</div>
+
+<div class="row g-4">
+  {% for section in sections %}
+  <div class="col-xl-4 col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-primary text-white">
+        <h2 class="h5 mb-0">{{ section.title }}</h2>
+      </div>
+      <div class="card-body">
+        <ol class="ps-3">
+          {% for entry in section.entries %}
+          <li class="mb-2">{{ entry }}</li>
+          {% endfor %}
+        </ol>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
