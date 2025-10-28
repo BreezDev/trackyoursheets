@@ -102,6 +102,12 @@ class User(UserMixin, TimestampMixin, db.Model):
     def check_password(self, password: str) -> bool:
         return check_password_hash(self.password_hash, password)
 
+    @property
+    def display_name_for_ui(self) -> str:
+        if getattr(self, "producer", None) and self.producer and self.producer.display_name:
+            return self.producer.display_name
+        return self.email
+
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -437,3 +443,16 @@ class WorkspaceNote(TimestampMixin, db.Model):
     workspace = db.relationship("Workspace", backref="notes", foreign_keys=[workspace_id])
     office = db.relationship("Office", backref="notes", foreign_keys=[office_id])
     owner = db.relationship("User", backref="notes", foreign_keys=[owner_id])
+
+
+class WorkspaceChatMessage(TimestampMixin, db.Model):
+    __tablename__ = "workspace_chat_messages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"), nullable=False)
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+
+    workspace = db.relationship("Workspace", backref="chat_messages", foreign_keys=[workspace_id])
+    author = db.relationship("User", backref="chat_messages", foreign_keys=[author_id])

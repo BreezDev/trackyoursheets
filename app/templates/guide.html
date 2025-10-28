@@ -10,6 +10,7 @@
     {% if back_to %}
     <a class="btn btn-outline-secondary" href="{{ back_to }}">Back to admin</a>
     {% endif %}
+    <button class="btn btn-outline-primary" type="button" data-start-tour>Take interactive tour</button>
     <a class="btn btn-primary" href="{{ url_for('main.onboarding') }}">Restart onboarding tour</a>
   </div>
 </div>
@@ -72,54 +73,156 @@
 </div>
 {% endblock %}
 
+<div class="modal fade" id="guideTourModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h1 class="modal-title h5 mb-0" data-tour-title>TrackYourSheets tour</h1>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="lead" data-tour-description></p>
+        <a class="btn btn-primary" data-tour-cta href="#" target="_blank" rel="noopener">Open section</a>
+      </div>
+      <div class="modal-footer d-flex justify-content-between align-items-center">
+        <button class="btn btn-outline-secondary" type="button" data-tour-prev>Previous</button>
+        <div class="d-flex align-items-center gap-3">
+          <span class="text-muted small" data-tour-progress></span>
+          <button class="btn btn-primary" type="button" data-tour-next>Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% block extra_scripts %}
 {{ super() }}
 <script>
-  const guideSearch = document.getElementById('guideSearch');
-  const guideSections = document.querySelectorAll('[data-guide-role]');
-  const guideNavLinks = document.querySelectorAll('[data-guide-nav]');
+  document.addEventListener('DOMContentLoaded', () => {
+    const guideSearch = document.getElementById('guideSearch');
+    const guideSections = document.querySelectorAll('[data-guide-role]');
+    const guideNavLinks = document.querySelectorAll('[data-guide-nav]');
+    const tourSteps = {{ tour_steps|tojson|safe }};
 
-  function normalise(value) {
-    return (value || '').toLowerCase();
-  }
+    const normalise = (value) => (value || '').toLowerCase();
 
-  function filterGuide(query) {
-    const normalized = normalise(query);
-    guideSections.forEach((section) => {
-      const keywords = normalise(section.getAttribute('data-guide-keywords'));
-      const label = normalise(section.querySelector('.fw-semibold').textContent);
-      const overview = normalise(section.querySelector('.small').textContent);
-      const matches = !normalized || [keywords, label, overview].some((value) => value.includes(normalized));
-      section.style.display = matches ? '' : 'none';
-      const navLink = document.querySelector(`[data-guide-nav][data-guide-target="${section.getAttribute('data-guide-role')}"]`);
-      if (navLink) {
-        navLink.classList.toggle('disabled', !matches);
+    const filterGuide = (query) => {
+      const normalized = normalise(query);
+      guideSections.forEach((section) => {
+        const keywords = normalise(section.getAttribute('data-guide-keywords'));
+        const label = normalise(section.querySelector('.fw-semibold').textContent);
+        const overview = normalise(section.querySelector('.small').textContent);
+        const matches = !normalized || [keywords, label, overview].some((value) => value.includes(normalized));
+        section.style.display = matches ? '' : 'none';
+        const navLink = document.querySelector(`[data-guide-nav][data-guide-target="${section.getAttribute('data-guide-role')}"]`);
+        if (navLink) {
+          navLink.classList.toggle('disabled', !matches);
+        }
+      });
+    };
+
+    if (guideSearch) {
+      guideSearch.addEventListener('input', (event) => {
+        filterGuide(event.target.value);
+      });
+
+      window.addEventListener('keydown', (event) => {
+        if (event.key === '/' && document.activeElement !== guideSearch) {
+          event.preventDefault();
+          guideSearch.focus();
+        }
+      });
+    }
+
+    guideNavLinks.forEach((link) => {
+      link.addEventListener('click', () => {
+        const targetId = link.getAttribute('data-guide-target');
+        const panel = document.getElementById(`collapse-${targetId}`);
+        if (panel && !panel.classList.contains('show')) {
+          const collapse = new bootstrap.Collapse(panel, { toggle: true });
+          collapse.show();
+        }
+      });
+    });
+
+    const tourModalEl = document.getElementById('guideTourModal');
+    const tourStartButtons = document.querySelectorAll('[data-start-tour]');
+    if (tourModalEl && Array.isArray(tourSteps) && tourSteps.length) {
+      const modal = new bootstrap.Modal(tourModalEl);
+      const titleEl = tourModalEl.querySelector('[data-tour-title]');
+      const descriptionEl = tourModalEl.querySelector('[data-tour-description]');
+      const ctaEl = tourModalEl.querySelector('[data-tour-cta]');
+      const progressEl = tourModalEl.querySelector('[data-tour-progress]');
+      const prevButton = tourModalEl.querySelector('[data-tour-prev]');
+      const nextButton = tourModalEl.querySelector('[data-tour-next]');
+      let currentStep = 0;
+
+      const renderStep = (index) => {
+        const step = tourSteps[index];
+        if (!step) {
+          return;
+        }
+        if (titleEl) {
+          titleEl.textContent = step.title || 'Interactive tour';
+        }
+        if (descriptionEl) {
+          descriptionEl.textContent = step.description || '';
+        }
+        if (ctaEl) {
+          if (step.cta_url) {
+            ctaEl.href = step.cta_url;
+            ctaEl.textContent = step.cta_label || 'Open section';
+            ctaEl.classList.remove('disabled');
+          } else {
+            ctaEl.href = '#';
+            ctaEl.textContent = 'Open section';
+            ctaEl.classList.add('disabled');
+          }
+        }
+        if (progressEl) {
+          progressEl.textContent = `Step ${index + 1} of ${tourSteps.length}`;
+        }
+        if (prevButton) {
+          prevButton.disabled = index === 0;
+        }
+        if (nextButton) {
+          nextButton.textContent = index === tourSteps.length - 1 ? 'Finish' : 'Next';
+        }
+      };
+
+      const goToStep = (index) => {
+        if (index < 0 || index >= tourSteps.length) {
+          return;
+        }
+        currentStep = index;
+        renderStep(currentStep);
+      };
+
+      if (prevButton) {
+        prevButton.addEventListener('click', () => {
+          if (currentStep > 0) {
+            goToStep(currentStep - 1);
+          }
+        });
       }
-    });
-  }
 
-  if (guideSearch) {
-    guideSearch.addEventListener('input', (event) => {
-      filterGuide(event.target.value);
-    });
-
-    window.addEventListener('keydown', (event) => {
-      if (event.key === '/' && document.activeElement !== guideSearch) {
-        event.preventDefault();
-        guideSearch.focus();
+      if (nextButton) {
+        nextButton.addEventListener('click', () => {
+          if (currentStep < tourSteps.length - 1) {
+            goToStep(currentStep + 1);
+          } else {
+            modal.hide();
+          }
+        });
       }
-    });
-  }
 
-  guideNavLinks.forEach((link) => {
-    link.addEventListener('click', () => {
-      const targetId = link.getAttribute('data-guide-target');
-      const panel = document.getElementById(`collapse-${targetId}`);
-      if (panel && !panel.classList.contains('show')) {
-        const collapse = new bootstrap.Collapse(panel, { toggle: true });
-        collapse.show();
-      }
-    });
+      tourStartButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          goToStep(0);
+          modal.show();
+        });
+      });
+    }
   });
 </script>
 {% endblock %}

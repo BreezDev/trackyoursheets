@@ -17,6 +17,12 @@ from .models import (
 )
 from .workspaces import get_accessible_workspace_ids
 
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
 
 reports_bp = Blueprint("reports", __name__)
 
@@ -601,105 +607,121 @@ def _build_pdf_report(title, dataset):
     table = dataset.get("table", [])
     columns = dataset.get("columns", [])
 
-    generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        title=title,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.75 * inch,
+    )
 
-    lines = [
-        "TrackYourSheets",
-        title,
-        f"Generated on {generated_at}",
-        "",
-        f"Total commission: ${summary.get('commission', 0):.2f}",
-        f"Total premium: ${summary.get('premium', 0):.2f}",
-        f"Sales recorded: {summary.get('count', 0)}",
-        "",
+    styles = getSampleStyleSheet()
+    brand_blue = colors.HexColor("#2A4BFF")
+    header_style = ParagraphStyle(
+        "ReportHeader",
+        parent=styles["Heading1"],
+        fontSize=22,
+        leading=28,
+        textColor=brand_blue,
+    )
+    subtitle_style = ParagraphStyle(
+        "ReportSubtitle",
+        parent=styles["Heading2"],
+        fontSize=14,
+        leading=18,
+    )
+
+    story = [
+        Paragraph("TrackYourSheets", header_style),
+        Paragraph(title, subtitle_style),
+        Spacer(1, 0.2 * inch),
     ]
 
-    if columns:
-        header_line = " | ".join(column["label"] for column in columns)
-        lines.append(header_line)
-        lines.append("-" * len(header_line))
-        for row in table[:40]:
+    generated_at = datetime.utcnow().strftime("%b %d, %Y %I:%M %p UTC")
+    summary_rows = [
+        ["Generated", generated_at],
+        ["Total commission", f"${summary.get('commission', 0):,.2f}"],
+        ["Total premium", f"${summary.get('premium', 0):,.2f}"],
+        ["Transactions", f"{summary.get('count', 0):,}"],
+    ]
+    summary_table = Table(
+        [["Metric", "Value"], *summary_rows],
+        hAlign="LEFT",
+        colWidths=[2.3 * inch, 4.0 * inch],
+    )
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), brand_blue),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ("FONTSIZE", (0, 0), (-1, 0), 11),
+            ]
+        )
+    )
+    story.append(summary_table)
+    story.append(Spacer(1, 0.3 * inch))
+
+    if columns and table:
+        header_row = [column["label"] for column in columns]
+        max_rows = 200
+        data_rows = []
+        for row in table[:max_rows]:
             rendered_cells = []
             for column in columns:
-                key = column["key"]
-                value = row.get(key)
+                value = row.get(column["key"])
                 if column.get("format") == "currency" and value is not None:
-                    rendered_cells.append(f"${float(value):.2f}")
+                    try:
+                        rendered_cells.append(f"${float(value):,.2f}")
+                    except (TypeError, ValueError):
+                        rendered_cells.append("$0.00")
                 else:
                     rendered_cells.append(str(value) if value not in {None, ""} else "—")
-            lines.append(" | ".join(rendered_cells))
-    else:
-        for row in table[:40]:
-            if isinstance(row, dict):
-                summary_line = " · ".join(
-                    f"{key}: {value}" for key, value in row.items()
-                )
-                lines.append(summary_line)
-            else:
-                lines.append(str(row))
-
-    return _text_to_pdf_bytes(lines)
-
-
-def _text_to_pdf_bytes(lines):
-    if isinstance(lines, str):
-        text_lines = lines.splitlines()
-    else:
-        text_lines = list(lines)
-    if not text_lines:
-        text_lines = [""]
-
-    content_parts = ["BT /F1 12 Tf 72 720 Td"]
-    for index, line in enumerate(text_lines):
-        safe_line = (
-            (line or "")
-            .replace("\\", "\\\\")
-            .replace("(", "\\(")
-            .replace(")", "\\)")
+            data_rows.append(rendered_cells)
+        tabular_data = [header_row, *data_rows]
+        pdf_table = Table(tabular_data, repeatRows=1)
+        pdf_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), brand_blue),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 10),
+                    ("FONTSIZE", (0, 1), (-1, -1), 9),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
         )
-        if index == 0:
-            content_parts.append(f"({safe_line}) Tj")
+        story.append(pdf_table)
+        if len(table) > max_rows:
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(
+                Paragraph(
+                    f"Showing first {max_rows} rows of {len(table)}. Export CSV for the full data set.",
+                    styles["Italic"],
+                )
+            )
+    else:
+        body_style = styles["BodyText"]
+        if table:
+            for row in table:
+                story.append(Paragraph(str(row), body_style))
+                story.append(Spacer(1, 0.1 * inch))
         else:
-            content_parts.append(f"0 -16 Td ({safe_line}) Tj")
-    content_parts.append("ET")
-    content_stream = "\n".join(content_parts)
-    content_bytes = content_stream.encode("latin-1")
+            story.append(Paragraph("No transactions available for this report.", body_style))
 
-    parts = []
-    offsets = []
-    total = 0
-
-    def append_bytes(value):
-        nonlocal total
-        if isinstance(value, str):
-            data = value.encode("latin-1")
-        else:
-            data = value
-        parts.append(data)
-        total += len(data)
-
-    def append_obj(value):
-        offsets.append(total)
-        append_bytes(value)
-
-    append_bytes("%PDF-1.4\n")
-    append_obj("1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n")
-    append_obj("2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n")
-    append_obj(
-        "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj\n"
-    )
-    append_obj(
-        f"4 0 obj<< /Length {len(content_bytes)} >>stream\n{content_stream}\nendstream\nendobj\n"
-    )
-    append_obj("5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n")
-
-    xref_offset = total
-    append_bytes("xref\n0 6\n0000000000 65535 f \n")
-    for offset in offsets:
-        append_bytes(f"{offset:010d} 00000 n \n")
-    append_bytes(f"trailer<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF")
-
-    return b"".join(parts)
+    document.build(story)
+    return buffer.getvalue()
 
 
 def _commission_row(txn):
