@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from flask_login import UserMixin
 
-from .models import Workspace
+from .models import Producer, Workspace
 
 
 def get_accessible_workspaces(user: UserMixin) -> List[Workspace]:
@@ -48,3 +48,30 @@ def find_workspace_for_upload(user: UserMixin, workspace_id: Optional[int]) -> O
         return accessible[0] if accessible else None
 
     return None
+
+
+def get_accessible_producers(user: UserMixin) -> List[Producer]:
+    """Return producers the user can view or manage."""
+    if not getattr(user, "is_authenticated", False):
+        return []
+
+    query = Producer.query.filter_by(org_id=user.org_id)
+
+    if user.role in {"owner", "admin"}:
+        return query.order_by(Producer.display_name.asc()).all()
+
+    if user.role == "agent":
+        return (
+            query.filter_by(agent_id=user.id)
+            .order_by(Producer.display_name.asc())
+            .all()
+        )
+
+    if user.role == "producer" and user.producer:
+        return [user.producer]
+
+    return []
+
+
+def user_can_access_workspace(user: UserMixin, workspace_id: int) -> bool:
+    return any(ws.id == workspace_id for ws in get_accessible_workspaces(user))

@@ -53,6 +53,7 @@ Although managed on `/imports`, admins should periodically:
 - Monitor batch statuses (`uploaded`, `imported`, `finalized`).
 - Review audit logs on the dashboard for any anomalies.
 - Ensure producers are uploading to the correct workspace — imports are scoped by workspace for reporting and reconciliation.
+- Spot-check manual sales created from the **Manual sale** screen; each entry immediately feeds reports and can be audited under the batch detail if attached or via the analytics ledger.
 
 ## Email notifications
 
@@ -65,6 +66,7 @@ Although managed on `/imports`, admins should periodically:
 - Configure regular backups using scheduled tasks plus off-site storage.
 - When Stripe is enabled, ensure webhook signing secrets are stored as environment variables.
 - Use the audit log table (`audit_log`) to trace changes for compliance.
+- Encourage workspace leads to maintain shared notes via the dashboard board — the content lives in `workspace_notes` and is visible to all workspace members.
 
 ## Roadmap for power admins
 

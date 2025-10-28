@@ -6,7 +6,10 @@
     <h1 class="h4 mb-0">Carrier statement imports</h1>
     <p class="text-muted small mb-0">Drop commission CSVs and we will auto-route rows by carrier into workspace queues.</p>
   </div>
-  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadModal" {% if not workspaces %}disabled{% endif %}>Upload statements</button>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-light text-primary border-primary {% if not workspaces %}disabled opacity-50{% endif %}" href="{{ url_for('imports.manual_entry') }}" {% if not workspaces %}aria-disabled="true" tabindex="-1"{% endif %}>Manual sale</a>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadModal" {% if not workspaces %}disabled{% endif %}>Upload statements</button>
+  </div>
 </div>
 
 {% if not workspaces %}
@@ -20,6 +23,7 @@
     <table class="table align-middle mb-0">
       <thead class="table-light">
         <tr>
+          <th></th>
           <th>Workspace</th>
           <th>Carrier</th>
           <th>Period</th>
@@ -27,11 +31,18 @@
           <th>Source</th>
           <th>Status</th>
           <th>Created</th>
+          <th>Totals</th>
         </tr>
       </thead>
       <tbody>
         {% for batch in batches %}
+        {% set summary = batch_summaries.get(batch.id) %}
         <tr>
+          <td class="text-center" style="width: 48px;">
+            <button class="btn btn-link btn-sm text-decoration-none" data-bs-toggle="collapse" data-bs-target="#batch-{{ batch.id }}" aria-expanded="false" aria-controls="batch-{{ batch.id }}">
+              &#9662;
+            </button>
+          </td>
           <td>{{ batch.workspace.name if batch.workspace else '—' }}</td>
           <td>{{ batch.carrier.name if batch.carrier else '—' }}</td>
           <td>{{ batch.period_month }}</td>
@@ -41,6 +52,81 @@
             <span class="badge rounded-pill bg-{{ 'success' if batch.status == 'finalized' else 'info' }}-soft text-{{ 'success' if batch.status == 'finalized' else 'info' }}">{{ batch.status|capitalize }}</span>
           </td>
           <td>{{ batch.created_at.strftime('%b %d, %Y %H:%M') if batch.created_at else '' }}</td>
+          <td>
+            {% if summary %}
+            <div class="d-flex flex-column small">
+              <span class="text-muted">Premium: <strong>${{ '%.2f'|format(summary.premium) }}</strong></span>
+              <span class="text-muted">Commission: <strong>${{ '%.2f'|format(summary.commission) }}</strong></span>
+            </div>
+            {% else %}
+            <span class="text-muted small">No transactions yet</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr class="collapse" id="batch-{{ batch.id }}">
+          <td colspan="9" class="bg-light">
+            <div class="p-3">
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                  <h6 class="mb-1">{{ batch.carrier.name if batch.carrier else 'Unspecified carrier' }}</h6>
+                  {% if summary %}
+                  <p class="mb-0 small text-muted">{{ summary.transactions }} transactions · ${{ '%.2f'|format(summary.premium) }} premium · ${{ '%.2f'|format(summary.commission) }} commission</p>
+                  {% endif %}
+                </div>
+                <a class="btn btn-outline-primary btn-sm" href="{{ url_for('imports.detail', batch_id=batch.id) }}">Open batch</a>
+              </div>
+              <div class="accordion" id="batchRows{{ batch.id }}">
+                <div class="accordion-item">
+                  <h2 class="accordion-header" id="heading{{ batch.id }}">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseRows{{ batch.id }}" aria-expanded="false" aria-controls="collapseRows{{ batch.id }}">
+                      Preview imported rows
+                    </button>
+                  </h2>
+                  <div id="collapseRows{{ batch.id }}" class="accordion-collapse collapse" aria-labelledby="heading{{ batch.id }}" data-bs-parent="#batchRows{{ batch.id }}">
+                    <div class="accordion-body">
+                      {% set rows = preview_rows.get(batch.id, []) %}
+                      {% if rows %}
+                      <div class="table-responsive">
+                        <table class="table table-sm table-striped mb-0">
+                          <thead>
+                            <tr>
+                              <th>Policy</th>
+                              <th>Customer</th>
+                              <th>Premium</th>
+                              <th>Commission</th>
+                              <th>Raw snapshot</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {% for row in rows %}
+                            <tr>
+                              {% set normalized = row.normalized or {} %}
+                              <td>{{ normalized.get('policy_number') or row.raw.get('policy_number') }}</td>
+                              <td>{{ normalized.get('customer') or row.raw.get('customer') }}</td>
+                              {% set premium_val = normalized.get('premium') %}
+                              {% set commission_val = normalized.get('commission') %}
+                              <td>${{ '%.2f'|format(premium_val) if premium_val is not none else '0.00' }}</td>
+                              <td>${{ '%.2f'|format(commission_val) if commission_val is not none else '0.00' }}</td>
+                              <td>
+                                <details>
+                                  <summary class="small">View raw</summary>
+                                  <pre class="mb-0 small text-muted">{{ row.raw | tojson(indent=2) }}</pre>
+                                </details>
+                              </td>
+                            </tr>
+                            {% endfor %}
+                          </tbody>
+                        </table>
+                      </div>
+                      {% else %}
+                      <p class="text-muted mb-0">No sample rows captured.</p>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </td>
         </tr>
         {% else %}
         <tr>

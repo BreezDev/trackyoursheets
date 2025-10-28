@@ -7,13 +7,7 @@
       <div class="card-body p-4">
         <h1 class="h4 mb-3">Launch your TrackYourSheets workspace</h1>
         <p class="text-muted">Create your organization, invite your first teammates, and connect carriers in minutes.</p>
-        
-        <form method="post" action="{{ url_for('auth.signup') }}">
-          <!-- ✅ Proper CSRF token handling -->
-          {% if csrf_token %}
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          {% endif %}
-
+        <form method="post">
           <div class="row g-3">
             <div class="col-md-6">
               <label class="form-label">Organization name</label>
@@ -37,15 +31,10 @@
               <input type="password" name="password" class="form-control" required>
             </div>
           </div>
-
-          <button type="submit" class="btn btn-primary btn-lg mt-4 w-100">Create workspace</button>
+          <button type="submit" class="btn btn-primary btn-lg mt-4">Create workspace</button>
         </form>
-
         <div class="border-top pt-3 mt-4">
-          <p class="small text-muted mb-0">
-            Already using TrackYourSheets? 
-            <a href="{{ url_for('auth.login') }}">Sign in</a>.
-          </p>
+          <p class="small text-muted mb-0">Already using TrackYourSheets? <a href="{{ url_for('auth.login') }}">Sign in</a>.</p>
         </div>
       </div>
     </div>

@@ -87,13 +87,7 @@ class User(UserMixin, TimestampMixin, db.Model):
     status = db.Column(db.String(32), nullable=False, default="active")
     last_login = db.Column(db.DateTime)
 
-    producer = db.relationship(
-    "Producer",
-    backref=db.backref("user", uselist=False),
-    uselist=False,
-    foreign_keys="Producer.user_id"  # ✅ Tell SQLAlchemy which FK to use
-)
-
+    producer = db.relationship("Producer", backref="user", uselist=False)
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
@@ -247,16 +241,29 @@ class CommissionTransaction(TimestampMixin, db.Model):
     producer_id = db.Column(db.Integer, db.ForeignKey("producers.id"))
     batch_id = db.Column(db.Integer, db.ForeignKey("import_batches.id"))
     workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"))
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     txn_date = db.Column(db.Date, nullable=False)
     premium = db.Column(db.Numeric(12, 2))
     commission = db.Column(db.Numeric(12, 2))
     basis = db.Column(db.String(32))
     split_pct = db.Column(db.Numeric(5, 2))
     amount = db.Column(db.Numeric(12, 2))
+    category = db.Column(db.String(32), default="unspecified")
+    carrier_name = db.Column(db.String(120))
+    product_type = db.Column(db.String(64))
+    source = db.Column(db.String(16), default="import")
     status = db.Column(db.String(32), default="provisional")
+    notes = db.Column(db.Text)
 
-    batch = db.relationship("ImportBatch", backref="commission_transactions", foreign_keys=[batch_id])
-    workspace = db.relationship("Workspace", backref="commission_transactions", foreign_keys=[workspace_id])
+    batch = db.relationship(
+        "ImportBatch", backref="commission_transactions", foreign_keys=[batch_id]
+    )
+    workspace = db.relationship(
+        "Workspace", backref="commission_transactions", foreign_keys=[workspace_id]
+    )
+    creator = db.relationship(
+        "User", backref="commission_transactions_created", foreign_keys=[created_by]
+    )
 
 
 class PayoutStatement(TimestampMixin, db.Model):
@@ -343,3 +350,20 @@ class AuditLog(TimestampMixin, db.Model):
     before = db.Column(db.JSON)
     after = db.Column(db.JSON)
     ts = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class WorkspaceNote(TimestampMixin, db.Model):
+    __tablename__ = "workspace_notes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    office_id = db.Column(db.Integer, db.ForeignKey("offices.id"))
+    workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"))
+    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    scope = db.Column(db.String(16), nullable=False, default="personal")
+    title = db.Column(db.String(120))
+    content = db.Column(db.Text, default="")
+
+    workspace = db.relationship("Workspace", backref="notes", foreign_keys=[workspace_id])
+    office = db.relationship("Office", backref="notes", foreign_keys=[office_id])
+    owner = db.relationship("User", backref="notes", foreign_keys=[owner_id])

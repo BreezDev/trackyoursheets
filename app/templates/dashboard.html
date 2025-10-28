@@ -33,6 +33,51 @@
 
 <section class="mt-5">
   <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h2 class="h5 mb-0">Workspace notes</h2>
+      <p class="text-muted small mb-0">Capture personal reminders or share updates with your office. Notes auto-save.</p>
+    </div>
+    {% if workspaces %}
+    <form method="get" class="d-flex align-items-center gap-2">
+      <label class="form-label mb-0 small text-muted" for="workspaceSwitcher">Workspace</label>
+      <select id="workspaceSwitcher" name="workspace_id" class="form-select form-select-sm" onchange="this.form.submit()">
+        {% for workspace in workspaces %}
+        <option value="{{ workspace.id }}" {% if active_workspace and active_workspace.id == workspace.id %}selected{% endif %}>
+          {{ workspace.office.name if workspace.office }}{% if workspace.office %} · {% endif %}{{ workspace.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </form>
+    {% endif %}
+  </div>
+  {% if not active_workspace %}
+  <div class="alert alert-warning">Assign a workspace to start capturing notes.</div>
+  {% else %}
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h3 class="h6">Personal notes</h3>
+          <textarea class="form-control" rows="8" data-note-scope="personal" data-workspace-id="{{ active_workspace.id }}">{{ personal_note.content if personal_note else '' }}</textarea>
+          <div class="form-text" data-note-status="personal">Only you can see these notes.</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h3 class="h6">Shared workspace board</h3>
+          <textarea class="form-control" rows="8" data-note-scope="shared" data-workspace-id="{{ active_workspace.id }}">{{ shared_note.content if shared_note else '' }}</textarea>
+          <div class="form-text" data-note-status="shared">Visible to everyone assigned to this workspace.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="mt-5">
+  <div class="d-flex justify-content-between align-items-center mb-3">
     <h2 class="h5 mb-0">Recent imports</h2>
     <a class="btn btn-sm btn-primary" href="{{ url_for('imports.index') }}">New import</a>
   </div>
@@ -94,4 +139,44 @@
     </div>
   </div>
 </section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const debounceTimers = {};
+    document.querySelectorAll('[data-note-scope]').forEach((textarea) => {
+      textarea.addEventListener('input', () => {
+        const scope = textarea.dataset.noteScope;
+        const workspaceId = textarea.dataset.workspaceId;
+        const statusEl = document.querySelector(`[data-note-status="${scope}"]`);
+        if (statusEl) {
+          statusEl.textContent = 'Saving…';
+        }
+        clearTimeout(debounceTimers[scope]);
+        debounceTimers[scope] = setTimeout(() => {
+          fetch(`/notes/${scope}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              content: textarea.value,
+              workspace_id: workspaceId
+            })
+          })
+            .then((response) => response.ok ? response.json() : Promise.reject(response))
+            .then(() => {
+              if (statusEl) {
+                statusEl.textContent = 'All changes saved.';
+              }
+            })
+            .catch(() => {
+              if (statusEl) {
+                statusEl.textContent = 'Unable to save. Check your connection.';
+              }
+            });
+        }, 600);
+      });
+    });
+  });
+</script>
 {% endblock %}

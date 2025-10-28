@@ -13,6 +13,9 @@ TrackYourSheets is a Flask-powered commissions CRM tailored for independent insu
 - **Auto carrier detection** – Ingest CSVs with a `carrier` column and automatically split rows into carrier-specific batches.
 - **Admin controls** – Manage organisations, users, carriers, rules, API tokens, and workspace assignments with role-based access.
 - **Email notifications** – Send import summaries via Nylas when producers upload fresh statements.
+- **Manual commissions** – Capture ad-hoc sales or adjustments per workspace with split enforcement and carrier tagging.
+- **Collaborative notes** – Keep personal scratchpads and shared workspace bulletins that auto-save for your team.
+- **Commission viewer** – Analyse recent payouts by carrier, producer, and revenue category with direct links back to source batches.
 
 ## Project structure
 
@@ -63,7 +66,9 @@ admin.md             # Admin console operations guide
 
    - Visit `http://127.0.0.1:5000/signup`.
    - Choose a seeded plan, provide your agency details, and you’ll be redirected to onboarding.
-   - From the admin console, create an office, add a workspace, and assign an agent before inviting producers.
+- From the admin console, create an office, add a workspace, and assign an agent before inviting producers.
+- Visit **Imports → Manual sale** to record a sample commission and confirm it rolls into Reports → Analytics & payouts.
+- Use the **Dashboard → Workspace notes** section to brief producers or leave personal reminders.
 
 ## Deploying on PythonAnywhere
 

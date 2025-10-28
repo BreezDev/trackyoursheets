@@ -1,0 +1,145 @@
+{% extends 'base.html' %}
+{% block title %}Import batch · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h4 mb-1">{{ batch.carrier.name if batch.carrier else 'Manual carrier' }}</h1>
+    <p class="text-muted mb-0 small">{{ batch.workspace.office.name if batch.workspace and batch.workspace.office }} · {{ batch.workspace.name if batch.workspace else 'Workspace unknown' }} · Period {{ batch.period_month }}</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('imports.index') }}">Back to imports</a>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-4">
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <h5 class="card-title">Batch totals</h5>
+        <dl class="row small mb-0">
+          <dt class="col-6 text-muted">Premium</dt>
+          <dd class="col-6 text-end">${{ '%.2f'|format(totals.premium) }}</dd>
+          <dt class="col-6 text-muted">Commission</dt>
+          <dd class="col-6 text-end">${{ '%.2f'|format(totals.commission) }}</dd>
+          <dt class="col-6 text-muted">Transactions</dt>
+          <dd class="col-6 text-end">{{ totals.transactions }}</dd>
+          <dt class="col-6 text-muted">Uploaded</dt>
+          <dd class="col-6 text-end">{{ batch.created_at.strftime('%b %d, %Y %H:%M') if batch.created_at }}</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <h5 class="card-title">Producer mix</h5>
+        {% if producer_breakdown %}
+        <ul class="list-group list-group-flush">
+          {% for name, stats in producer_breakdown.items() %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <span class="fw-semibold">{{ name }}</span>
+              <div class="text-muted small">{{ stats.count }} txn · ${{ '%.2f'|format(stats.premium) }} premium</div>
+            </div>
+            <span class="badge bg-primary">${{ '%.2f'|format(stats.commission) }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted small mb-0">No producer assignments captured.</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">Source file</h5>
+        <p class="small mb-2 text-muted">Stored at {{ batch.file_path or 'N/A' }}</p>
+        <p class="small text-muted mb-0">Created by {{ batch.creator.email if batch.creator }}.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="card-title mb-0">Commission transactions</h5>
+          <span class="badge bg-light text-dark">{{ batch.commission_transactions|length }} entries</span>
+        </div>
+        {% if batch.commission_transactions %}
+        <div class="table-responsive">
+          <table class="table table-sm table-striped align-middle">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Producer</th>
+                <th>Category</th>
+                <th>Product</th>
+                <th class="text-end">Premium</th>
+                <th class="text-end">Commission</th>
+                <th class="text-end">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for txn in batch.commission_transactions %}
+              <tr>
+                <td>{{ txn.txn_date.strftime('%b %d, %Y') if txn.txn_date }}</td>
+                <td>{{ txn.producer.display_name if txn.producer else 'Unassigned' }}</td>
+                <td>{{ txn.category or 'raw' }}</td>
+                <td>{{ txn.product_type or '—' }}</td>
+                <td class="text-end">${{ '%.2f'|format(txn.premium or 0) }}</td>
+                <td class="text-end">${{ '%.2f'|format(txn.commission or 0) }}</td>
+                <td class="text-end">${{ '%.2f'|format(txn.amount or 0) }}</td>
+              </tr>
+              {% if txn.notes %}
+              <tr class="table-light">
+                <td colspan="7">
+                  <details>
+                    <summary class="small">Notes & adjustments</summary>
+                    <pre class="small mb-0">{{ txn.notes }}</pre>
+                  </details>
+                </td>
+              </tr>
+              {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">No transactions were generated from this batch.</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">Imported sheet preview</h5>
+        {% if batch.rows %}
+        <div class="accordion" id="rowAccordion">
+          {% for row in batch.rows %}
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="headingRow{{ row.id }}">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#row{{ row.id }}" aria-expanded="false" aria-controls="row{{ row.id }}">
+                {% set normalized = row.normalized or {} %}
+                Policy {{ normalized.get('policy_number') or row.raw.get('policy_number', 'Unknown') }} · ${{ normalized.get('premium') or row.raw.get('premium', '0') }} premium
+              </button>
+            </h2>
+            <div id="row{{ row.id }}" class="accordion-collapse collapse" aria-labelledby="headingRow{{ row.id }}" data-bs-parent="#rowAccordion">
+              <div class="accordion-body">
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <h6 class="text-muted text-uppercase small">Normalized</h6>
+                    <pre class="bg-light p-3 rounded small mb-0">{{ row.normalized | tojson(indent=2) }}</pre>
+                  </div>
+                  <div class="col-md-6">
+                    <h6 class="text-muted text-uppercase small">Original</h6>
+                    <pre class="bg-light p-3 rounded small mb-0">{{ row.raw | tojson(indent=2) }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">No rows captured for this batch.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
