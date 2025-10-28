@@ -45,6 +45,49 @@ The landing card summarises your plan, usage, and quick stats. Billing plan chan
 - Extend scopes in code (`admin.create_api_key`) as new APIs become available.
 - Rotate keys periodically and revoke unused keys directly from the database until UI revocation is added.
 
+## Subscription rule updates
+
+All plan entitlements live in the `subscription_plans` table (`app/models.py`). To adjust pricing, seat limits, or billing cadence:
+
+1. Open a Flask shell: `flask shell`.
+2. Load the target plan, e.g. `plan = SubscriptionPlan.query.filter_by(name="Scale").first()`.
+3. Update any attribute – `plan.price_per_user = Decimal("199.00")`, `plan.max_users = 25`, `plan.max_rows_per_month = 150000`, etc.
+4. Commit with `db.session.commit()`.
+
+Trials and expirations live on `Organization.trial_ends_at` plus the `subscriptions` table for active billing. Adjust those timestamps to change plan length (e.g. set a new `trial_ends_at` or `Subscription.trial_end`). When Stripe is connected, webhook handlers should replace manual edits.
+
+## Workspace email notifications via Nylas
+
+The helper in `app/nylas_email.py` wraps the Nylas v3 send endpoint. To trigger notifications from the admin console:
+
+1. Ensure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` are defined in your environment.
+2. Import `from app.nylas_email import send_nylas_email` inside any admin route or shell task.
+3. Call `send_nylas_email(recipient_email, subject, html_body)` – the function returns a tuple `(success, response_json)` to confirm delivery.
+
+Use this from invitation workflows, audit alerts, or billing reminders to keep teams informed. For workspace invites, hook into `admin.create_user` after the `db.session.commit()` line.
+
+## Master admin bootstrap account
+
+Create a top-level console user with the provided credentials so you always have a fallback super-admin:
+
+```python
+from app import create_app, db
+from app.models import User
+
+app = create_app()
+with app.app_context():
+    email = "insurance@audimi.co.site"
+    password = "Tofu"
+    existing = User.query.filter_by(email=email).first()
+    if not existing:
+        user = User(email=email, role="owner", org_id=1)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+```
+
+Update `org_id` if your master organisation uses a different primary key. Once created, sign in at `/admin` and manage every workspace from the Master Admin dashboard (planned feature) or directly through organisation filters.
+
 ## Import operations
 
 Although managed on `/imports`, admins should periodically:
