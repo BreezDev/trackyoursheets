@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% block title %}Commission Activity · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Commission activity</h1>
+    <p class="text-muted mb-0">Detailed view of transaction {{ transaction.id }} including overrides and notes.</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('reports.overview') }}">Back to reports</a>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-light">
+    <h2 class="h6 mb-0">Summary</h2>
+  </div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3">Date</dt>
+      <dd class="col-sm-9">{{ transaction.txn_date.strftime('%Y-%m-%d') if transaction.txn_date else '—' }}</dd>
+      <dt class="col-sm-3">Producer</dt>
+      <dd class="col-sm-9">{{ transaction.producer.display_name if transaction.producer else 'Unassigned' }}</dd>
+      <dt class="col-sm-3">Workspace</dt>
+      <dd class="col-sm-9">{{ transaction.workspace.name if transaction.workspace else (transaction.batch.workspace.name if transaction.batch and transaction.batch.workspace else '—') }}</dd>
+      <dt class="col-sm-3">Policy</dt>
+      <dd class="col-sm-9">{{ transaction.policy.policy_number if transaction.policy else '—' }}</dd>
+      <dt class="col-sm-3">Carrier</dt>
+      <dd class="col-sm-9">{{ transaction.carrier_name or (transaction.policy.carrier.name if transaction.policy and transaction.policy.carrier else '—') }}</dd>
+      <dt class="col-sm-3">Premium</dt>
+      <dd class="col-sm-9">${{ '%.2f'|format(transaction.premium or 0) }}</dd>
+      <dt class="col-sm-3">Commission</dt>
+      <dd class="col-sm-9">${{ '%.2f'|format(transaction.amount or 0) }}</dd>
+      <dt class="col-sm-3">Split</dt>
+      <dd class="col-sm-9">{{ transaction.split_pct or transaction.manual_split_pct or '—' }}%</dd>
+      <dt class="col-sm-3">Category</dt>
+      <dd class="col-sm-9">{{ transaction.category or 'Uncategorized' }}</dd>
+      <dt class="col-sm-3">Status</dt>
+      <dd class="col-sm-9">{{ transaction.status or '—' }}</dd>
+      <dt class="col-sm-3">Source</dt>
+      <dd class="col-sm-9">{{ transaction.source or '—' }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">Override history</h2>
+    <span class="small text-muted">Newest first</span>
+  </div>
+  <div class="list-group list-group-flush">
+    {% if transaction.overrides %}
+    {% for override in transaction.overrides|sort(attribute='applied_at', reverse=True) %}
+    <div class="list-group-item">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <div class="fw-semibold">{{ override.override_type|capitalize }} override</div>
+          <div class="small text-muted">Applied {{ override.applied_at.strftime('%Y-%m-%d %H:%M') if override.applied_at }} by {{ override.applier.email if override.applier else 'System' }}</div>
+          {% if override.notes %}<div class="small">{{ override.notes }}</div>{% endif %}
+        </div>
+        <div class="text-end">
+          {% if override.flat_amount %}<div class="fw-semibold">${{ '%.2f'|format(override.flat_amount) }}</div>{% endif %}
+          {% if override.percent %}<div class="small">Percent: {{ override.percent }}%</div>{% endif %}
+          {% if override.split_pct %}<div class="small">Split: {{ override.split_pct }}%</div>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="list-group-item text-center text-muted">No overrides recorded for this transaction.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-light">
+    <h2 class="h6 mb-0">Notes</h2>
+  </div>
+  <div class="card-body">
+    <pre class="mb-0 text-muted" style="white-space: pre-wrap;">{{ transaction.notes or 'No notes available.' }}</pre>
+  </div>
+</div>
+{% endblock %}

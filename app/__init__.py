@@ -3,6 +3,7 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from flask_migrate import Migrate
+from sqlalchemy import inspect, text
 
 
 db = SQLAlchemy()
@@ -35,6 +36,11 @@ def create_app(test_config=None):
     login_manager.init_app(app)
 
     from . import models  # noqa: F401
+
+    with app.app_context():
+        db.create_all()
+        _ensure_schema_extensions()
+        _seed_default_categories()
     from .auth import auth_bp
     from .main import main_bp
     from .admin import admin_bp
@@ -107,3 +113,66 @@ def create_app(test_config=None):
         print("Database ready.")
 
     return app
+
+
+def _ensure_schema_extensions() -> None:
+    inspector = inspect(db.engine)
+    existing_tables = set(inspector.get_table_names())
+
+    if "api_keys" in existing_tables:
+        columns = {col["name"] for col in inspector.get_columns("api_keys")}
+        migrations = []
+        if "token_prefix" not in columns:
+            migrations.append("ALTER TABLE api_keys ADD COLUMN token_prefix VARCHAR(16)")
+        if "token_last4" not in columns:
+            migrations.append("ALTER TABLE api_keys ADD COLUMN token_last4 VARCHAR(4)")
+        if "revoked_at" not in columns:
+            migrations.append("ALTER TABLE api_keys ADD COLUMN revoked_at DATETIME")
+        if migrations:
+            with db.engine.begin() as conn:
+                for statement in migrations:
+                    conn.execute(text(statement))
+
+    if "commission_txns" in existing_tables:
+        columns = {col["name"] for col in inspector.get_columns("commission_txns")}
+        migrations = []
+        if "manual_amount" not in columns:
+            migrations.append("ALTER TABLE commission_txns ADD COLUMN manual_amount NUMERIC(12,2)")
+        if "manual_split_pct" not in columns:
+            migrations.append("ALTER TABLE commission_txns ADD COLUMN manual_split_pct NUMERIC(5,2)")
+        if "override_source" not in columns:
+            migrations.append("ALTER TABLE commission_txns ADD COLUMN override_source VARCHAR(32)")
+        if "override_applied_at" not in columns:
+            migrations.append("ALTER TABLE commission_txns ADD COLUMN override_applied_at DATETIME")
+        if "override_applied_by" not in columns:
+            migrations.append("ALTER TABLE commission_txns ADD COLUMN override_applied_by INTEGER")
+        if migrations:
+            with db.engine.begin() as conn:
+                for statement in migrations:
+                    conn.execute(text(statement))
+
+
+def _seed_default_categories() -> None:
+    from .models import CategoryTag, Organization
+
+    default_lines = ["Auto", "Home", "Renters", "Life"]
+    default_statuses = ["Raw", "Existing", "Renewal"]
+
+    for org in Organization.query.all():
+        for name in default_lines:
+            _get_or_create_category(org.id, name, "line")
+        for name in default_statuses:
+            _get_or_create_category(org.id, name, "status")
+
+
+def _get_or_create_category(org_id: int, name: str, kind: str) -> None:
+    from .models import CategoryTag
+
+    exists = CategoryTag.query.filter_by(
+        org_id=org_id, name=name, kind=kind
+    ).first()
+    if exists:
+        return
+    tag = CategoryTag(org_id=org_id, name=name, kind=kind, is_default=True)
+    db.session.add(tag)
+    db.session.commit()

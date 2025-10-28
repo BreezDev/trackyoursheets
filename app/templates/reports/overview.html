@@ -1,13 +1,16 @@
 {% extends 'base.html' %}
 {% block title %}Analytics & Reports · TrackYourSheets{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4 gap-3">
   <div>
     <h1 class="h4 mb-0">Analytics & payouts</h1>
     <p class="text-muted small mb-0">Monitor revenue mix, track chargebacks, and deliver producer-ready statements.</p>
   </div>
-  <div class="text-end small text-muted">
-    Generated {{ generated_at.strftime('%b %d, %Y %H:%M UTC') }}
+  <div class="text-lg-end">
+    <div class="mb-2">
+      <a class="btn btn-outline-primary btn-sm" href="{{ url_for('reports.analytics_dashboard') }}">Open interactive charts</a>
+    </div>
+    <div class="small text-muted">Generated {{ generated_at.strftime('%b %d, %Y %H:%M UTC') }}</div>
   </div>
 </div>
 
@@ -73,11 +76,12 @@
               <td class="text-end">${{ '%.2f'|format(txn.premium or 0) }}</td>
               <td class="text-end">${{ '%.2f'|format(txn.amount or 0) }}</td>
               <td class="text-end">
-                {% if txn.batch_id %}
-                <a class="link-primary small" href="{{ url_for('imports.detail', batch_id=txn.batch_id) }}">View batch</a>
-                {% else %}
-                <span class="badge bg-secondary">{{ txn.source|capitalize }}</span>
-                {% endif %}
+                <div class="d-flex justify-content-end gap-2">
+                  {% if txn.batch_id %}
+                  <a class="link-primary small" href="{{ url_for('imports.detail', batch_id=txn.batch_id) }}">Batch</a>
+                  {% endif %}
+                  <a class="link-secondary small" href="{{ url_for('reports.activity_detail', txn_id=txn.id) }}">Details</a>
+                </div>
               </td>
             </tr>
             {% else %}

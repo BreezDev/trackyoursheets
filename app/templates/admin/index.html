@@ -102,8 +102,12 @@
 <div class="row g-4 mt-1">
   <div class="col-xl-6">
     <div class="card shadow-sm h-100">
-      <div class="card-header bg-light">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h2 class="h6 mb-0">Producers</h2>
+        <div class="btn-group">
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.leaderboard') }}">Leaderboard</a>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.manage_categories') }}">Categories</a>
+        </div>
       </div>
       <div class="list-group list-group-flush">
         {% for producer in producers %}
@@ -137,6 +141,33 @@
         {% else %}
         <div class="list-group-item text-center text-muted">Add your first carrier to start mapping statements.</div>
         {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Knowledge base</h2>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.how_to') }}">Open guide</a>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">Step-by-step instructions for agents, producers, bookkeepers, auditors, admins, and read-only teammates are embedded directly in the app.</p>
+        <p class="text-muted small mb-0">Bookmark the guide so new hires can onboard themselves in minutes.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Analytics</h2>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('reports.analytics_dashboard') }}">View charts</a>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">Interactive charts update instantly as you filter by category, business type, producer, team, and period.</p>
+        <p class="text-muted small mb-0">Export filtered datasets as CSV or PDF to share performance snapshots with leadership.</p>
       </div>
     </div>
   </div>

@@ -1,0 +1,266 @@
+{% extends 'base.html' %}
+{% block title %}Analytics · TrackYourSheets{% endblock %}
+{% block extra_head %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Analytics</h1>
+    <p class="text-muted mb-0">Interactive charts refresh instantly as you adjust filters. Export the current view to share with leadership.</p>
+  </div>
+  <div class="btn-group">
+    <button class="btn btn-outline-primary" type="button" data-export="csv">Export CSV</button>
+    <button class="btn btn-outline-primary" type="button" data-export="pdf">Export PDF</button>
+  </div>
+</div>
+
+<form id="analyticsFilters" class="card shadow-sm mb-4" data-data-url="{{ url_for('reports.analytics_data') }}" data-export-url="{{ url_for('reports.analytics_export') }}">
+  <div class="card-header bg-light">
+    <h2 class="h6 mb-0">Filters</h2>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Category</label>
+        <select class="form-select" name="category">
+          <option value="">All</option>
+          {% for category in categories %}
+          <option value="{{ category }}">{{ category }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Producer</label>
+        <select class="form-select" name="producer_id">
+          <option value="">All</option>
+          {% for producer in producers %}
+          <option value="{{ producer.id }}">{{ producer.display_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Workspace</label>
+        <select class="form-select" name="workspace_id">
+          <option value="">All</option>
+          {% for workspace in workspaces %}
+          <option value="{{ workspace.id }}">{{ workspace.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Group by</label>
+        <select class="form-select" name="group_by">
+          <option value="month" selected>Month</option>
+          <option value="day">Day</option>
+          <option value="producer">Producer</option>
+          <option value="workspace">Workspace</option>
+          <option value="category">Category</option>
+          <option value="product">Product</option>
+          <option value="status">Status</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Product type</label>
+        <input type="text" class="form-control" name="product_type" placeholder="e.g. Auto">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Status</label>
+        <input type="text" class="form-control" name="status" placeholder="e.g. recorded">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">From</label>
+        <input type="date" class="form-control" name="date_from">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">To</label>
+        <input type="date" class="form-control" name="date_to">
+      </div>
+    </div>
+  </div>
+  <div class="card-footer d-flex justify-content-between">
+    <button class="btn btn-outline-secondary" type="reset">Reset</button>
+    <button class="btn btn-primary" type="submit">Update charts</button>
+  </div>
+</form>
+
+<div class="row g-3 mb-4" id="analyticsSummary">
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-uppercase small text-muted">Commission</div>
+        <div class="display-6 fw-semibold" data-summary="commission">$0.00</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-uppercase small text-muted">Premium</div>
+        <div class="display-6 fw-semibold" data-summary="premium">$0.00</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-uppercase small text-muted">Transactions</div>
+        <div class="display-6 fw-semibold" data-summary="count">0</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <canvas id="analyticsChart" height="120"></canvas>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">Transactions</h2>
+    <span class="text-muted small">Click a row to open the detailed activity record.</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table align-middle mb-0" id="analyticsTable">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Date</th>
+          <th scope="col">Producer</th>
+          <th scope="col">Workspace</th>
+          <th scope="col">Category</th>
+          <th scope="col">Product</th>
+          <th scope="col">Premium</th>
+          <th scope="col">Commission</th>
+          <th scope="col">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td colspan="8" class="text-center text-muted py-4">Use the filters above to load analytics.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+{{ super() }}
+<script>
+  const filtersForm = document.getElementById('analyticsFilters');
+  const chartCanvas = document.getElementById('analyticsChart');
+  const summaryNodes = {
+    commission: document.querySelector('[data-summary="commission"]'),
+    premium: document.querySelector('[data-summary="premium"]'),
+    count: document.querySelector('[data-summary="count"]'),
+  };
+  let analyticsChart = null;
+
+  async function loadAnalytics() {
+    const params = new URLSearchParams(new FormData(filtersForm));
+    const url = `${filtersForm.dataset.dataUrl}?${params.toString()}`;
+    const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!response.ok) {
+      console.error('Failed to load analytics', response.statusText);
+      return;
+    }
+    const payload = await response.json();
+    updateSummary(payload.summary || {});
+    updateChart(payload.labels || [], payload.series || []);
+    updateTable(payload.table || []);
+  }
+
+  function updateSummary(summary) {
+    summaryNodes.commission.textContent = `$${Number(summary.commission || 0).toFixed(2)}`;
+    summaryNodes.premium.textContent = `$${Number(summary.premium || 0).toFixed(2)}`;
+    summaryNodes.count.textContent = Number(summary.count || 0).toLocaleString();
+  }
+
+  function updateChart(labels, series) {
+    if (analyticsChart) {
+      analyticsChart.destroy();
+    }
+    analyticsChart = new Chart(chartCanvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: series.map((item, index) => ({
+          label: item.label,
+          data: item.data,
+          tension: 0.3,
+          borderWidth: 2,
+          fill: index === 0,
+        })),
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            position: 'top',
+          },
+        },
+        scales: {
+          y: {
+            ticks: {
+              callback: (value) => `$${Number(value).toLocaleString()}`,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function updateTable(rows) {
+    const tbody = document.querySelector('#analyticsTable tbody');
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      const emptyRow = document.createElement('tr');
+      emptyRow.innerHTML = '<td colspan="8" class="text-center text-muted py-4">No transactions match the selected filters.</td>';
+      tbody.appendChild(emptyRow);
+      return;
+    }
+    rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${row.date || ''}</td>
+        <td>${row.producer || ''}</td>
+        <td>${row.workspace || ''}</td>
+        <td>${row.category || ''}</td>
+        <td>${row.product_type || ''}</td>
+        <td>$${Number(row.premium || 0).toFixed(2)}</td>
+        <td>$${Number(row.commission || 0).toFixed(2)}</td>
+        <td>${row.status || ''}</td>
+      `;
+      if (row.link) {
+        tr.classList.add('table-row-link');
+        tr.addEventListener('click', () => {
+          window.location.href = row.link;
+        });
+        tr.style.cursor = 'pointer';
+      }
+      tbody.appendChild(tr);
+    });
+  }
+
+  filtersForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    loadAnalytics();
+  });
+
+  filtersForm.addEventListener('reset', () => {
+    setTimeout(loadAnalytics, 50);
+  });
+
+  document.querySelectorAll('[data-export]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const params = new URLSearchParams(new FormData(filtersForm));
+      params.set('format', button.dataset.export);
+      window.location.href = `${filtersForm.dataset.exportUrl}?${params.toString()}`;
+    });
+  });
+
+  loadAnalytics();
+</script>
+{% endblock %}

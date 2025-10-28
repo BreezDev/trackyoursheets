@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% block title %}Producer Leaderboard · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Producer leaderboard</h1>
+    <p class="text-muted mb-0">Monitor performance and drill into individual sales. Totals refresh the moment overrides are applied.</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.index') }}">Back to admin</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col" class="text-center">#</th>
+            <th scope="col">Producer</th>
+            <th scope="col">Workspace</th>
+            <th scope="col" class="text-end">Commission</th>
+            <th scope="col" class="text-end">Premium</th>
+            <th scope="col" class="text-end">Sales</th>
+            <th scope="col" class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if leaderboard %}
+          {% for row in leaderboard %}
+          <tr>
+            <td class="text-center">{{ loop.index }}</td>
+            <td>
+              <div class="fw-semibold">{{ row.display_name }}</div>
+              {% if row.producer and row.producer.agent %}
+              <div class="small text-muted">Managed by {{ row.producer.agent.email }}</div>
+              {% endif %}
+            </td>
+            <td>{{ row.workspace }}</td>
+            <td class="text-end fw-semibold">${{ '%.2f'|format(row.commission) }}</td>
+            <td class="text-end">${{ '%.2f'|format(row.premium) }}</td>
+            <td class="text-end">{{ row.transactions }}</td>
+            <td class="text-end">
+              {% if row.producer_id %}
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.producer_sales', producer_id=row.producer_id) }}">View sales</a>
+              {% else %}
+              <span class="badge bg-secondary">Unassigned</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% else %}
+          <tr>
+            <td colspan="7" class="text-center text-muted py-4">No transactions yet. Import statements or create manual sales to populate the leaderboard.</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

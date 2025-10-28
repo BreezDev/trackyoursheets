@@ -58,13 +58,13 @@ Trials and expirations live on `Organization.trial_ends_at` plus the `subscripti
 
 ## Workspace email notifications via Nylas
 
-The helper in `app/nylas_email.py` wraps the Nylas v3 send endpoint. To trigger notifications from the admin console:
+`app/nylas_email.py` now exposes task-focused helpers around the Nylas v3 send endpoint. Wire them into admin workflows as follows:
 
-1. Ensure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` are defined in your environment.
-2. Import `from app.nylas_email import send_nylas_email` inside any admin route or shell task.
-3. Call `send_nylas_email(recipient_email, subject, html_body)` – the function returns a tuple `(success, response_json)` to confirm delivery.
+1. Ensure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` environment variables are set.
+2. For import summaries, call `send_import_notification(recipient, workspace, uploader, period, summary_rows)`.
+3. For workspace invitations, call `send_workspace_invitation(recipient, inviter, workspace, role)` immediately after committing the new user record.
 
-Use this from invitation workflows, audit alerts, or billing reminders to keep teams informed. For workspace invites, hook into `admin.create_user` after the `db.session.commit()` line.
+Both helpers log failures to the Flask app logger so you can troubleshoot without breaking the request cycle. They also no-op gracefully when credentials are missing (useful in local dev environments).
 
 ## Master admin bootstrap account
 

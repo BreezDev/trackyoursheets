@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% block title %}Manage Categories · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Manage categories</h1>
+    <p class="text-muted mb-0">Configure the line of business and status tags that drive imports, analytics, and reports.</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.index') }}">Back to admin</a>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Add category</h2>
+      </div>
+      <form method="post" action="{{ url_for('admin.manage_categories') }}" class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Name</label>
+          <input type="text" name="name" class="form-control" placeholder="e.g. Umbrella" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Type</label>
+          <select name="kind" class="form-select">
+            <option value="status">Status (Raw, Existing, Renewal)</option>
+            <option value="line">Line of business (Auto, Home, Life)</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" type="submit">Add category</button>
+      </form>
+    </div>
+  </div>
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Existing categories</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Type</th>
+              <th scope="col" class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if categories %}
+            {% for category in categories %}
+            <tr>
+              <td>
+                <form class="d-flex gap-2" method="post" action="{{ url_for('admin.update_category', category_id=category.id) }}">
+                  <input type="text" name="name" class="form-control" value="{{ category.name }}" required>
+                  <select name="kind" class="form-select">
+                    <option value="status" {% if category.kind == 'status' %}selected{% endif %}>Status</option>
+                    <option value="line" {% if category.kind == 'line' %}selected{% endif %}>Line of business</option>
+                  </select>
+                  <button class="btn btn-outline-primary" type="submit">Save</button>
+                </form>
+              </td>
+              <td class="text-muted">{{ category.kind.title() }}</td>
+              <td class="text-end">
+                <form method="post" action="{{ url_for('admin.delete_category', category_id=category.id) }}" onsubmit="return confirm('Remove {{ category.name }}? Existing transactions keep their current category.');">
+                  <button class="btn btn-outline-danger btn-sm" type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+              <td colspan="3" class="text-center text-muted py-4">No categories yet. Add your first entry to begin organizing sales.</td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
