@@ -80,7 +80,7 @@
             <div class="mb-4">
               <h3 class="h6 fw-semibold">{{ step.title }}</h3>
               <ol class="guide-step-list">
-                {% for item in step.items %}
+                {% for item in step["items"] if step["items"] is iterable %}
                 <li>{{ item }}</li>
                 {% endfor %}
               </ol>

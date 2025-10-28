@@ -184,6 +184,10 @@ def guide():
             step_copy["cta_url"] = url_for(endpoint, **kwargs)
         tour_steps.append(step_copy)
     back_to = request.args.get("back_to")
+    for section in sections:
+        for step in section.get("steps", []):
+            print("DEBUG STEP:", step)
+            print("DEBUG TYPE OF step['items']:", type(step.get("items")))
     return render_template("guide.html", sections=sections, tour_steps=tour_steps, back_to=back_to)
 
 
@@ -484,7 +488,7 @@ def save_note(scope: str):
             db.session.add(note)
 
     note.owner = current_user
-    
+
     note.content = content
     db.session.commit()
     db.session.refresh(note)
