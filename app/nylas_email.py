@@ -256,8 +256,8 @@ def send_signup_welcome(user, organization) -> None:
         [
             f"Hi {user.email},",
             "",
-            "Thanks for starting your TrackYourSheets trial!",
-            f"Your organisation, {org_name}, is live with a 15-day trial to explore producer payouts, import automation, and workspace collaboration.",
+            "Thanks for activating your TrackYourSheets subscription!",
+            f"Your organisation, {org_name}, is ready to automate producer payouts, streamline imports, and collaborate in workspaces.",
             "",
             "Get started by:",
             " • Adding your first workspace and agent",

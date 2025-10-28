@@ -4,7 +4,7 @@
 <div class="d-flex flex-column flex-lg-row justify-content-lg-between align-items-lg-center mb-4 gap-3">
   <div>
     <h1 class="h3 mb-1">Profile, billing, and workspace settings</h1>
-    <p class="text-muted mb-0">Manage your contact details, subscription, and trial status. Launch the interactive guide for an on-screen tour anytime.</p>
+    <p class="text-muted mb-0">Manage your contact details, subscription, and billing tools. Launch the interactive guide for an on-screen tour anytime.</p>
   </div>
   <div class="d-flex flex-wrap gap-2">
     <a class="btn btn-outline-secondary" href="{{ url_for('main.guide', back_to=url_for('main.settings')) }}">Open full guide</a>
@@ -77,7 +77,7 @@
         {% if stripe_enabled %}
         <div class="alert alert-info d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-2" role="alert">
           <div>
-            <strong>Stripe billing is enabled.</strong> Use checkout to activate upgrades and launch the billing portal to manage payment methods.
+            <strong>Stripe billing is enabled.</strong> Select a plan and continue to secure checkout to confirm subscription changes.
           </div>
           {% if stripe_mode %}
           <span class="badge bg-info-soft text-info text-uppercase">{{ stripe_mode }} mode</span>
@@ -124,9 +124,10 @@
           {% if can_manage_plan %}
           <div class="d-flex justify-content-end flex-wrap gap-2 mt-3">
             {% if stripe_enabled %}
-            <button class="btn btn-outline-primary" type="submit" name="checkout_with_stripe" value="1">Checkout with Stripe</button>
+            <button class="btn btn-primary" type="submit">Continue to Stripe checkout</button>
+            {% else %}
+            <div class="alert alert-warning mb-0 w-100" role="alert">Stripe is not configured. Contact support to change plans.</div>
             {% endif %}
-            <button class="btn btn-primary" type="submit">Update plan</button>
           </div>
           {% endif %}
         </form>
@@ -135,43 +136,6 @@
           <button class="btn btn-outline-secondary" type="submit">Open Stripe billing portal</button>
         </form>
         {% endif %}
-        {% endif %}
-      </div>
-    </div>
-
-    <div class="card shadow-sm mt-4">
-      <div class="card-header bg-light d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-3">
-        <div>
-          <h2 class="h6 mb-0">Free trial controls</h2>
-          {% if organization.trial_ends_at %}
-          <p class="text-muted small mb-0">Trial ends {{ organization.trial_ends_at.strftime('%b %d, %Y') }}{% if trial_days_remaining is not none %} ({{ trial_days_remaining }} day{{ '' if trial_days_remaining == 1 else 's' }} remaining){% endif %}</p>
-          {% else %}
-          <p class="text-muted small mb-0">No active trial. Apply a coupon or extend to grant access.</p>
-          {% endif %}
-        </div>
-        {% if subscription %}
-        <span class="badge bg-info-soft text-info">Subscription status: {{ subscription.status or 'unknown' }}</span>
-        {% endif %}
-      </div>
-      <div class="card-body">
-        {% if can_manage_plan %}
-        <form method="post" class="row g-3 align-items-end">
-          <input type="hidden" name="intent" value="trial">
-          <div class="col-md-6">
-            <label class="form-label">Grant trial days</label>
-            <div class="input-group">
-              <input type="number" min="1" step="1" name="trial_days" class="form-control" value="15">
-              <span class="input-group-text">days</span>
-            </div>
-            <div class="form-text">Standard trial is 15 days. Extend or reset as needed.</div>
-          </div>
-          <div class="col-md-6 d-flex gap-2 justify-content-md-end">
-            <button class="btn btn-outline-danger" type="submit" name="action" value="end">End trial now</button>
-            <button class="btn btn-primary" type="submit">Save trial window</button>
-          </div>
-        </form>
-        {% else %}
-        <p class="text-muted mb-0">Contact an admin or agent to adjust the organisation trial.</p>
         {% endif %}
       </div>
     </div>

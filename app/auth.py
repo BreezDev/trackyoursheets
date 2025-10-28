@@ -1,11 +1,12 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, flash, redirect, render_template, request, url_for, current_app
 from flask_login import current_user, login_required, login_user, logout_user
 
 from . import db
 from .models import Organization, SubscriptionPlan, Subscription, User
 from .nylas_email import send_signup_alert, send_signup_welcome
+from sqlalchemy import func
 
 
 auth_bp = Blueprint("auth", __name__)
@@ -17,53 +18,186 @@ def signup():
         return redirect(url_for("main.dashboard"))
 
     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
+    default_plan = plans[0] if plans else None
 
     if request.method == "POST":
         org_name = request.form.get("org_name")
         email = request.form.get("email")
         password = request.form.get("password")
-        plan_id = request.form.get("plan_id")
 
-        if not all([org_name, email, password, plan_id]):
+        if not all([org_name, email, password]):
             flash("All fields are required.", "danger")
         elif User.query.filter_by(email=email).first():
             flash("Email already registered.", "danger")
+        elif not default_plan:
+            flash("No plans are configured yet. Please contact support.", "danger")
         else:
+            stripe_gateway = current_app.extensions.get("stripe_gateway")
+            if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
+                flash("Stripe payments are not configured. Contact support for assistance.", "danger")
+                return render_template("signup.html", plans=plans, default_plan=default_plan)
+
+            org = Organization(
+                name=org_name,
+                plan_id=default_plan.id,
+                trial_ends_at=None,
+            )
+            user = User(email=email, role="owner", organization=org)
+            user.set_password(password)
+            subscription = Subscription(
+                organization=org,
+                plan=default_plan.name,
+                status="incomplete",
+            )
+            db.session.add(org)
+            db.session.add(user)
+            db.session.add(subscription)
+
             try:
-                selected_plan_id = int(plan_id)
-            except (TypeError, ValueError):
-                flash("Select a valid plan.", "danger")
-                return render_template("signup.html", plans=plans)
+                db.session.flush()
+            except Exception:
+                db.session.rollback()
+                flash("We couldn't create your workspace. Please try again.", "danger")
+                return render_template("signup.html", plans=plans, default_plan=default_plan)
 
-            plan = SubscriptionPlan.query.filter_by(id=selected_plan_id).first()
-            if not plan:
-                flash("Selected plan is no longer available.", "danger")
-            else:
-                trial_end = datetime.utcnow() + timedelta(days=15)
-                org = Organization(
-                    name=org_name,
-                    plan_id=plan.id,
-                    trial_ends_at=trial_end,
-                )
-                user = User(email=email, role="owner", organization=org)
-                user.set_password(password)
-                subscription = Subscription(
+            seat_quantity = 1
+            success_url = url_for(
+                "auth.signup_complete",
+                _external=True,
+            )
+            success_url = f"{success_url}?session_id={{CHECKOUT_SESSION_ID}}"
+            cancel_url = url_for("auth.signup_cancelled", _external=True)
+
+            try:
+                checkout_url = stripe_gateway.create_checkout_session(
                     organization=org,
-                    plan=plan.name,
-                    status="trialing",
-                    trial_end=trial_end,
+                    plan=default_plan,
+                    quantity=seat_quantity,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    client_reference_id=str(user.id),
+                    metadata={"flow": "signup"},
+                    subscription_metadata={
+                        "plan_id": str(default_plan.id),
+                        "user_id": str(user.id),
+                        "flow": "signup",
+                    },
                 )
-                db.session.add(org)
-                db.session.add(user)
-                db.session.add(subscription)
-                db.session.commit()
-                send_signup_welcome(user, org)
-                send_signup_alert(user, org)
-                login_user(user)
-                flash("Welcome to TrackYourSheets!", "success")
-                return redirect(url_for("main.onboarding"))
+            except Exception:
+                current_app.logger.exception("Stripe checkout creation failed during signup")
+                db.session.rollback()
+                flash(
+                    "We couldn't start Stripe checkout. Please verify your billing details and try again.",
+                    "danger",
+                )
+                return render_template("signup.html", plans=plans, default_plan=default_plan)
 
-    return render_template("signup.html", plans=plans)
+            db.session.commit()
+            flash("Redirecting to secure checkout to activate your subscription.", "info")
+            return redirect(checkout_url)
+
+    return render_template("signup.html", plans=plans, default_plan=default_plan)
+
+
+@auth_bp.route("/signup/cancelled")
+def signup_cancelled():
+    flash(
+        "Your Stripe checkout was cancelled. You can restart the signup anytime to activate your workspace.",
+        "warning",
+    )
+    return redirect(url_for("auth.signup"))
+
+
+@auth_bp.route("/signup/complete")
+def signup_complete():
+    session_id = request.args.get("session_id")
+    if not session_id:
+        flash("Checkout session missing. Please contact support.", "danger")
+        return redirect(url_for("auth.login"))
+
+    stripe_gateway = current_app.extensions.get("stripe_gateway")
+    if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
+        flash("Stripe integration is not configured. Please contact support.", "danger")
+        return redirect(url_for("auth.login"))
+
+    try:
+        session = stripe_gateway.retrieve_checkout_session(session_id)
+    except Exception:
+        current_app.logger.exception("Failed to retrieve Stripe checkout session")
+        flash("We couldn't verify your payment. Please contact support.", "danger")
+        return redirect(url_for("auth.login"))
+
+    if getattr(session, "status", None) != "complete":
+        flash("Checkout is not complete yet. Please finish payment in Stripe.", "warning")
+        return redirect(url_for("auth.login"))
+
+    user_id = getattr(session, "client_reference_id", None)
+    if not user_id:
+        flash("We couldn't locate your account. Please contact support.", "danger")
+        return redirect(url_for("auth.login"))
+
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        flash("We couldn't locate your account. Please contact support.", "danger")
+        return redirect(url_for("auth.login"))
+
+    user = User.query.get(user_id_int)
+    if not user:
+        flash("We couldn't locate your account. Please contact support.", "danger")
+        return redirect(url_for("auth.login"))
+
+    org = user.organization
+    if not org:
+        flash("Your organization was not found. Please contact support.", "danger")
+        return redirect(url_for("auth.login"))
+
+    subscription_record = Subscription.query.filter_by(org_id=org.id).first()
+    if not subscription_record:
+        subscription_record = Subscription(org_id=org.id)
+        db.session.add(subscription_record)
+
+    stripe_subscription = getattr(session, "subscription", None)
+    plan_id = None
+    plan_name = None
+
+    if stripe_subscription and getattr(stripe_subscription, "metadata", None):
+        plan_id = stripe_subscription.metadata.get("plan_id") or stripe_subscription.metadata.get("plan")
+        plan_name = stripe_subscription.metadata.get("plan")
+    if not plan_id and getattr(session, "metadata", None):
+        plan_id = session.metadata.get("plan_id") or session.metadata.get("plan")
+        plan_name = plan_name or session.metadata.get("plan")
+
+    resolved_plan = None
+    if plan_id and str(plan_id).isdigit():
+        resolved_plan = SubscriptionPlan.query.get(int(plan_id))
+    if not resolved_plan and plan_name:
+        resolved_plan = SubscriptionPlan.query.filter(func.lower(SubscriptionPlan.name) == plan_name.lower()).first()
+
+    if resolved_plan:
+        org.plan_id = resolved_plan.id
+        plan_name = resolved_plan.name
+
+    subscription_record.plan = plan_name or subscription_record.plan
+    subscription_record.status = getattr(stripe_subscription, "status", None) or "active"
+    subscription_record.stripe_sub_id = getattr(stripe_subscription, "id", None)
+
+    trial_end_timestamp = getattr(stripe_subscription, "trial_end", None)
+    if trial_end_timestamp:
+        subscription_record.trial_end = datetime.utcfromtimestamp(trial_end_timestamp)
+        org.trial_ends_at = subscription_record.trial_end
+    else:
+        subscription_record.trial_end = None
+        org.trial_ends_at = None
+
+    db.session.commit()
+
+    send_signup_welcome(user, org)
+    send_signup_alert(user, org)
+
+    login_user(user)
+    flash("Welcome to TrackYourSheets! Your subscription is active.", "success")
+    return redirect(url_for("main.onboarding"))
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])

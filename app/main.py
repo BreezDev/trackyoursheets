@@ -269,14 +269,14 @@ def settings():
 
         if intent == "plan":
             if not can_manage_plan:
-                flash("You do not have permission to change plans.", "danger")
+                flash("You do not have permission to change the plan.", "danger")
                 return redirect(url_for("main.settings"))
 
             plan_id_raw = request.form.get("plan_id")
             try:
                 selected_plan_id = int(plan_id_raw)
             except (TypeError, ValueError):
-                flash("Select a plan to continue.", "danger")
+                flash("Select a valid plan.", "danger")
                 return redirect(url_for("main.settings"))
 
             plan = SubscriptionPlan.query.filter_by(id=selected_plan_id).first()
@@ -284,131 +284,56 @@ def settings():
                 flash("Selected plan could not be found.", "danger")
                 return redirect(url_for("main.settings"))
 
-            if request.form.get("checkout_with_stripe"):
-                if not stripe_enabled:
-                    flash("Stripe checkout is not configured for this environment.", "warning")
-                    return redirect(url_for("main.settings"))
-                seat_count = max(User.query.filter_by(org_id=org.id).count(), 1)
-                success_url = url_for("main.settings", _external=True)
-                cancel_url = success_url
-                try:
-                    checkout_url = stripe_gateway.create_checkout_session(
-                        organization=org,
-                        plan=plan,
-                        quantity=seat_count,
-                        success_url=success_url,
-                        cancel_url=cancel_url,
-                    )
-                except Exception as exc:  # pragma: no cover - Stripe errors logged only
-                    current_app.logger.error("Stripe checkout session failed", exc_info=exc)
-                    flash(
-                        "We couldn't start the Stripe checkout session. Please try again or contact support.",
-                        "danger",
-                    )
-                    return redirect(url_for("main.settings"))
-                return redirect(checkout_url)
+            if organization.plan_id == plan.id:
+                flash("You're already on this plan.", "info")
+                return redirect(url_for("main.settings"))
 
-            org.plan_id = plan.id
-            if subscription:
-                subscription.plan = plan.name
-                if subscription.status not in {"active", "trialing"}:
-                    subscription.status = "active"
-            else:
-                subscription = Subscription(
-                    organization=org,
-                    plan=plan.name,
-                    status="active",
+            if not stripe_enabled or not stripe_gateway:
+                flash(
+                    "Stripe billing is not configured. Contact support to change plans.",
+                    "danger",
                 )
-                db.session.add(subscription)
+                return redirect(url_for("main.settings"))
 
-            db.session.commit()
-            flash(f"Plan updated to {plan.name}.", "success")
-            recipients = _billing_contacts(org) or [current_user.email]
-            message_lines = [
-                f"Organisation: {org.name}",
-                f"Updated by: {current_user.email}",
-                f"New plan: {plan.name}",
-            ]
-            send_notification_email(
-                recipients=recipients,
-                subject=f"Plan updated to {plan.name}",
-                body="\n".join(message_lines),
-                metadata={"org_id": org.id, "plan_id": plan.id},
+            active_users = (
+                User.query.filter_by(org_id=org.id, status="active").count() or 1
             )
-            return redirect(url_for("main.settings"))
 
-        if intent == "trial":
-            if not can_manage_plan:
-                flash("You do not have permission to manage the trial.", "danger")
-                return redirect(url_for("main.settings"))
+            success_url = url_for("main.checkout_complete", _external=True)
+            success_url = f"{success_url}?session_id={{CHECKOUT_SESSION_ID}}"
+            cancel_url = url_for("main.settings", _external=True)
 
-            action = request.form.get("action", "set")
-            if action == "end":
-                org.trial_ends_at = datetime.utcnow()
-                if subscription:
-                    subscription.status = "active"
-                    subscription.trial_end = None
-                db.session.commit()
-                flash("Trial ended. Billing continues on the selected plan.", "info")
-                recipients = _billing_contacts(org) or [current_user.email]
-                send_notification_email(
-                    recipients=recipients,
-                    subject=f"Trial ended for {org.name}",
-                    body="\n".join(
-                        [
-                            f"Organisation: {org.name}",
-                            f"Updated by: {current_user.email}",
-                            "Trial status: Ended",
-                        ]
-                    ),
-                    metadata={"org_id": org.id, "action": "trial_end"},
-                )
-                return redirect(url_for("main.settings"))
-
-            trial_days = request.form.get("trial_days")
             try:
-                trial_days_value = int(trial_days)
-            except (TypeError, ValueError):
-                flash("Enter the number of days to grant for the trial.", "danger")
-                return redirect(url_for("main.settings"))
-
-            if trial_days_value < 1:
-                flash("Trial days must be at least 1.", "danger")
-                return redirect(url_for("main.settings"))
-
-            new_trial_end = datetime.utcnow() + timedelta(days=trial_days_value)
-            org.trial_ends_at = new_trial_end
-            if subscription:
-                subscription.status = "trialing"
-                subscription.trial_end = new_trial_end
-            else:
-                subscription = Subscription(
+                checkout_url = stripe_gateway.create_checkout_session(
                     organization=org,
-                    plan=org.plan.name if org.plan else "Trial",
-                    status="trialing",
-                    trial_end=new_trial_end,
+                    plan=plan,
+                    quantity=active_users,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    client_reference_id=str(org.id),
+                    metadata={
+                        "flow": "plan_change",
+                        "initiated_by": current_user.email,
+                    },
+                    subscription_metadata={
+                        "plan_id": str(plan.id),
+                        "flow": "plan_change",
+                        "initiated_by": current_user.email,
+                    },
                 )
-                db.session.add(subscription)
+            except Exception:
+                current_app.logger.exception(
+                    "Stripe checkout creation failed for plan change"
+                )
+                flash(
+                    "We couldn't start Stripe checkout. Please try again or contact support.",
+                    "danger",
+                )
+                return redirect(url_for("main.settings"))
 
-            db.session.commit()
-            flash(
-                f"Trial extended through {new_trial_end.strftime('%b %d, %Y')}.",
-                "success",
-            )
-            recipients = _billing_contacts(org) or [current_user.email]
-            send_notification_email(
-                recipients=recipients,
-                subject=f"Trial updated for {org.name}",
-                body="\n".join(
-                    [
-                        f"Organisation: {org.name}",
-                        f"Updated by: {current_user.email}",
-                        f"New trial end: {new_trial_end.strftime('%b %d, %Y')}",
-                    ]
-                ),
-                metadata={"org_id": org.id, "action": "trial_extend"},
-            )
-            return redirect(url_for("main.settings"))
+            flash("Redirecting to Stripe to confirm your subscription update.", "info")
+            return redirect(checkout_url)
+
 
         if intent == "redeem":
             if not can_manage_plan:
@@ -503,11 +428,6 @@ def settings():
             )
             return redirect(url_for("main.settings"))
 
-    trial_days_remaining = None
-    if org.trial_ends_at:
-        delta = org.trial_ends_at - datetime.utcnow()
-        trial_days_remaining = max(delta.days + (1 if delta.seconds > 0 else 0), 0)
-
     usage_snapshot = {
         "users": User.query.filter_by(org_id=org.id).count(),
         "workspaces": Workspace.query.filter_by(org_id=org.id).count(),
@@ -527,7 +447,6 @@ def settings():
         plans=plans,
         organization=org,
         subscription=subscription,
-        trial_days_remaining=trial_days_remaining,
         can_manage_plan=can_manage_plan,
         usage_snapshot=usage_snapshot,
         stripe_enabled=stripe_enabled,
@@ -559,6 +478,111 @@ def open_billing_portal():
         )
         return redirect(url_for("main.settings"))
     return redirect(portal_url)
+
+
+@main_bp.route("/billing/checkout/complete")
+@login_required
+def checkout_complete():
+    session_id = request.args.get("session_id")
+    if not session_id:
+        flash("Checkout session missing. Please contact support if this persists.", "danger")
+        return redirect(url_for("main.settings"))
+
+    stripe_gateway = current_app.extensions.get("stripe_gateway")
+    if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
+        flash("Stripe integration is not configured. Please contact support.", "danger")
+        return redirect(url_for("main.settings"))
+
+    try:
+        session = stripe_gateway.retrieve_checkout_session(session_id)
+    except Exception:
+        current_app.logger.exception("Failed to retrieve Stripe checkout session")
+        flash("We couldn't verify the Stripe checkout session. Please contact support.", "danger")
+        return redirect(url_for("main.settings"))
+
+    if getattr(session, "status", None) != "complete":
+        flash("Checkout has not completed yet. Please finish payment in Stripe.", "warning")
+        return redirect(url_for("main.settings"))
+
+    org = Organization.query.get_or_404(current_user.org_id)
+
+    session_customer = getattr(session, "customer", None)
+    if org.stripe_customer_id and session_customer and org.stripe_customer_id != session_customer:
+        flash("This checkout session does not belong to your organisation.", "danger")
+        return redirect(url_for("main.settings"))
+    if session_customer and not org.stripe_customer_id:
+        org.stripe_customer_id = session_customer
+
+    subscription_record = Subscription.query.filter_by(org_id=org.id).first()
+    if not subscription_record:
+        subscription_record = Subscription(org_id=org.id)
+        db.session.add(subscription_record)
+
+    stripe_subscription = getattr(session, "subscription", None)
+    metadata = {}
+    if stripe_subscription and getattr(stripe_subscription, "metadata", None):
+        metadata = dict(stripe_subscription.metadata)
+    elif getattr(session, "metadata", None):
+        metadata = dict(session.metadata)
+
+    plan_id = metadata.get("plan_id")
+    plan_name = metadata.get("plan") or metadata.get("plan_name")
+
+    resolved_plan = None
+    if plan_id and str(plan_id).isdigit():
+        resolved_plan = SubscriptionPlan.query.get(int(plan_id))
+    if not resolved_plan and plan_name:
+        resolved_plan = SubscriptionPlan.query.filter(func.lower(SubscriptionPlan.name) == plan_name.lower()).first()
+
+    if resolved_plan:
+        org.plan_id = resolved_plan.id
+        plan_name = resolved_plan.name
+
+    subscription_record.plan = plan_name or subscription_record.plan
+    subscription_record.status = (
+        getattr(stripe_subscription, "status", None)
+        or getattr(session, "status", None)
+        or subscription_record.status
+        or "active"
+    )
+    subscription_record.stripe_sub_id = (
+        getattr(stripe_subscription, "id", None) or subscription_record.stripe_sub_id
+    )
+
+    trial_end_ts = getattr(stripe_subscription, "trial_end", None)
+    if trial_end_ts:
+        subscription_record.trial_end = datetime.utcfromtimestamp(trial_end_ts)
+        org.trial_ends_at = subscription_record.trial_end
+    else:
+        subscription_record.trial_end = None
+        org.trial_ends_at = None
+
+    db.session.commit()
+
+    quantity = None
+    line_items = getattr(session, "line_items", None)
+    if line_items and getattr(line_items, "data", None):
+        first_item = line_items.data[0]
+        quantity = getattr(first_item, "quantity", None)
+
+    recipients = _billing_contacts(org) or [current_user.email]
+    message_lines = [
+        f"Organisation: {org.name}",
+        f"Updated by: {current_user.email}",
+        f"Plan: {plan_name or subscription_record.plan or 'Unknown'}",
+    ]
+    if quantity:
+        message_lines.append(f"Seats confirmed: {quantity}")
+
+    send_notification_email(
+        recipients=recipients,
+        subject=f"Stripe checkout completed for {org.name}",
+        body="\n".join(message_lines),
+        metadata={"org_id": org.id, "session_id": session_id},
+    )
+
+    flash("Subscription update confirmed. Thanks for completing checkout!", "success")
+    return redirect(url_for("main.settings"))
 
 
 @main_bp.route("/notes/<scope>", methods=["POST"])

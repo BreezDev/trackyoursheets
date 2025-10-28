@@ -208,7 +208,7 @@ def get_role_guides() -> List[Dict[str, object]]:
                         "Lock down read-only users with navigation tips so executives can explore without editing data.",
                         "Audit workspace chat for sensitive information and archive conversations when policies renew.",
                         "Export billing utilisation data to CSV for finance reviews and budgeting.",
-                        "Confirm free-trial expirations and recurring payments from the subscription settings screen.",
+                        "Confirm upcoming renewals and completed Stripe checkouts from the subscription settings screen.",
                     ],
                 },
             ],

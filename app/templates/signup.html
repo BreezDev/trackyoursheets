@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Start your trial · TrackYourSheets{% endblock %}
+{% block title %}Activate your subscription · TrackYourSheets{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-6">
@@ -7,20 +7,16 @@
       <div class="card-body p-4">
         <h1 class="h4 mb-3">Launch your TrackYourSheets workspace</h1>
         <p class="text-muted">Create your organization, invite your first teammates, and connect carriers in minutes.</p>
+        {% if default_plan %}
+        <div class="alert alert-info" role="alert">
+          <strong>{{ default_plan.name }}</strong> is pre-selected for signup. Checkout will confirm payment of ${{ '%.2f'|format(default_plan.price_per_user) }} per user each month.
+        </div>
+        {% endif %}
         <form method="post">
           <div class="row g-3">
             <div class="col-md-6">
               <label class="form-label">Organization name</label>
               <input type="text" name="org_name" class="form-control" placeholder="Acme Insurance Group" required>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Plan</label>
-              <select name="plan_id" class="form-select" required>
-                <option value="" disabled selected>Select a plan</option>
-                {% for plan in plans %}
-                <option value="{{ plan.id }}">{{ plan.name }} — ${{ '%.0f'|format(plan.price_per_user) }}/user</option>
-                {% endfor %}
-              </select>
             </div>
             <div class="col-md-6">
               <label class="form-label">Work email</label>
