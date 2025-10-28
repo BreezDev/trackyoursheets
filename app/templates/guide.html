@@ -1,0 +1,306 @@
+{% extends 'base.html' %}
+{% block title %}Interactive Guide · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="guide-hero card shadow-sm mb-4 border-0 overflow-hidden">
+  <div class="row g-0 align-items-center">
+    <div class="col-lg-8 p-4 p-lg-5">
+      <span class="badge bg-primary-soft text-primary text-uppercase small mb-2">Knowledge base</span>
+      <h1 class="h3 mb-3">Interactive how-to guide</h1>
+      <p class="text-muted mb-4">Search by role, open step-by-step checklists, and launch tours that show exactly where to click. Every persona—agents, producers, bookkeepers, auditors, admins, and read-only observers—has a dedicated playbook.</p>
+      <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" type="button" data-start-tour>Take interactive tour</button>
+        <a class="btn btn-outline-primary" href="{{ url_for('main.onboarding') }}">Restart onboarding tour</a>
+        {% if back_to %}
+        <a class="btn btn-outline-secondary" href="{{ back_to }}">Back</a>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-lg-4 d-none d-lg-block text-center pe-4">
+      <div class="guide-illustration my-4">
+        <span class="material-symbols-outlined">menu_book</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 guide-layout">
+  <div class="col-lg-4">
+    <div class="card shadow-sm position-sticky" style="top: 1.5rem;">
+      <div class="card-body">
+        <label class="form-label">Find a playbook</label>
+        <input type="search" id="guideSearch" class="form-control" placeholder="Search roles, tasks, or keywords">
+        <div class="list-group list-group-flush mt-3" id="guideNav">
+          {% for section in sections %}
+          <button
+            type="button"
+            class="list-group-item list-group-item-action text-start"
+            data-guide-nav
+            data-guide-target="{{ section.slug }}"
+          >
+            <div class="fw-semibold">{{ section.title }}</div>
+            <div class="small text-muted">{{ section.overview }}</div>
+          </button>
+          {% endfor %}
+        </div>
+        <p class="small text-muted mt-3 mb-0">Tip: Press <kbd>/</kbd> to jump straight to search.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="accordion" id="guideAccordion">
+      {% for section in sections %}
+      <div
+        class="accordion-item mb-3"
+        data-guide-role="{{ section.slug }}"
+        data-guide-keywords="{{ (section.keywords | join(' ')) | lower }}"
+      >
+        <h2 class="accordion-header" id="heading-{{ section.slug }}">
+          <button
+            class="accordion-button collapsed"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#collapse-{{ section.slug }}"
+            aria-expanded="false"
+            aria-controls="collapse-{{ section.slug }}"
+          >
+            <div>
+              <div class="fw-semibold" data-guide-title>{{ section.title }}</div>
+              <div class="small text-muted" data-guide-overview>{{ section.overview }}</div>
+            </div>
+          </button>
+        </h2>
+        <div
+          id="collapse-{{ section.slug }}"
+          class="accordion-collapse collapse"
+          aria-labelledby="heading-{{ section.slug }}"
+          data-bs-parent="#guideAccordion"
+        >
+          <div class="accordion-body">
+            {% for step in section.steps %}
+            <div class="mb-4">
+              <h3 class="h6 fw-semibold">{{ step.title }}</h3>
+              <ol class="guide-step-list">
+                {% for item in step.items %}
+                <li>{{ item }}</li>
+                {% endfor %}
+              </ol>
+            </div>
+            {% endfor %}
+            <div class="alert alert-info mb-0" role="alert">
+              Pro tip: Use the navigation on the left to jump between roles or open the onboarding tour for a guided walkthrough.
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="guideTourModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h1 class="modal-title h5 mb-0" data-tour-title>TrackYourSheets tour</h1>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="lead" data-tour-description></p>
+        <a class="btn btn-primary" data-tour-cta href="#" target="_blank" rel="noopener">Open section</a>
+      </div>
+      <div class="modal-footer d-flex justify-content-between align-items-center">
+        <button class="btn btn-outline-secondary" type="button" data-tour-prev>Previous</button>
+        <div class="d-flex align-items-center gap-3">
+          <span class="text-muted small" data-tour-progress></span>
+          <button class="btn btn-primary" type="button" data-tour-next>Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+{{ super() }}
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@400" />
+<style>
+  .guide-hero {
+    background: linear-gradient(135deg, rgba(42, 75, 255, 0.08), rgba(13, 110, 253, 0.02));
+    border-radius: 24px;
+  }
+  .guide-illustration {
+    width: 140px;
+    height: 140px;
+    border-radius: 50%;
+    background: rgba(13, 110, 253, 0.12);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 64px;
+    color: #0d6efd;
+  }
+  .guide-step-list {
+    counter-reset: step;
+    list-style: none;
+    padding-left: 0;
+  }
+  .guide-step-list li {
+    counter-increment: step;
+    margin-bottom: 0.75rem;
+    padding-left: 2.75rem;
+    position: relative;
+    line-height: 1.5;
+  }
+  .guide-step-list li::before {
+    content: counter(step);
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: #0d6efd;
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+  }
+</style>
+{% endblock %}
+
+{% block extra_scripts %}
+{{ super() }}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const guideSearch = document.getElementById('guideSearch');
+    const guideSections = document.querySelectorAll('[data-guide-role]');
+    const guideNavLinks = document.querySelectorAll('[data-guide-nav]');
+    const tourSteps = {{ tour_steps|tojson|safe }};
+
+    const normalise = (value) => (value || '').toLowerCase();
+
+    const filterGuide = (query) => {
+      const normalised = normalise(query);
+      guideSections.forEach((section) => {
+        const keywords = section.getAttribute('data-guide-keywords') || '';
+        const titleEl = section.querySelector('[data-guide-title]');
+        const overviewEl = section.querySelector('[data-guide-overview]');
+        const title = titleEl ? titleEl.textContent : '';
+        const overview = overviewEl ? overviewEl.textContent : '';
+        const matches = !normalised || [keywords, title, overview].some((value) => normalise(value).includes(normalised));
+        section.style.display = matches ? '' : 'none';
+        const navLink = document.querySelector(`[data-guide-nav][data-guide-target="${section.getAttribute('data-guide-role')}"]`);
+        if (navLink) {
+          navLink.classList.toggle('disabled', !matches);
+          navLink.disabled = !matches;
+        }
+      });
+    };
+
+    if (guideSearch) {
+      guideSearch.addEventListener('input', (event) => {
+        filterGuide(event.target.value);
+      });
+
+      window.addEventListener('keydown', (event) => {
+        if (event.key === '/' && document.activeElement !== guideSearch) {
+          event.preventDefault();
+          guideSearch.focus();
+        }
+      });
+    }
+
+    guideNavLinks.forEach((link) => {
+      link.addEventListener('click', () => {
+        const targetId = link.getAttribute('data-guide-target');
+        const panel = document.getElementById(`collapse-${targetId}`);
+        if (panel && !panel.classList.contains('show')) {
+          const collapse = new bootstrap.Collapse(panel, { toggle: true });
+          collapse.show();
+          panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+
+    const tourModalEl = document.getElementById('guideTourModal');
+    const tourStartButtons = document.querySelectorAll('[data-start-tour]');
+    if (tourModalEl && Array.isArray(tourSteps) && tourSteps.length) {
+      const modal = new bootstrap.Modal(tourModalEl);
+      const titleEl = tourModalEl.querySelector('[data-tour-title]');
+      const descriptionEl = tourModalEl.querySelector('[data-tour-description]');
+      const ctaEl = tourModalEl.querySelector('[data-tour-cta]');
+      const progressEl = tourModalEl.querySelector('[data-tour-progress]');
+      const prevButton = tourModalEl.querySelector('[data-tour-prev]');
+      const nextButton = tourModalEl.querySelector('[data-tour-next]');
+      let currentStep = 0;
+
+      const renderStep = (index) => {
+        const step = tourSteps[index];
+        if (!step) {
+          return;
+        }
+        if (titleEl) {
+          titleEl.textContent = step.title || 'Interactive tour';
+        }
+        if (descriptionEl) {
+          descriptionEl.textContent = step.description || '';
+        }
+        if (ctaEl) {
+          if (step.cta_url) {
+            ctaEl.href = step.cta_url;
+            ctaEl.textContent = step.cta_label || 'Open section';
+            ctaEl.classList.remove('disabled');
+          } else {
+            ctaEl.href = '#';
+            ctaEl.textContent = 'Open section';
+            ctaEl.classList.add('disabled');
+          }
+        }
+        if (progressEl) {
+          progressEl.textContent = `Step ${index + 1} of ${tourSteps.length}`;
+        }
+        if (prevButton) {
+          prevButton.disabled = index === 0;
+        }
+        if (nextButton) {
+          nextButton.textContent = index === tourSteps.length - 1 ? 'Finish' : 'Next';
+        }
+      };
+
+      const goToStep = (index) => {
+        if (index < 0 || index >= tourSteps.length) {
+          return;
+        }
+        currentStep = index;
+        renderStep(currentStep);
+      };
+
+      if (prevButton) {
+        prevButton.addEventListener('click', () => {
+          if (currentStep > 0) {
+            goToStep(currentStep - 1);
+          }
+        });
+      }
+
+      if (nextButton) {
+        nextButton.addEventListener('click', () => {
+          if (currentStep < tourSteps.length - 1) {
+            goToStep(currentStep + 1);
+          } else {
+            modal.hide();
+          }
+        });
+      }
+
+      tourStartButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          goToStep(0);
+          modal.show();
+        });
+      });
+    }
+  });
+</script>
+{% endblock %}

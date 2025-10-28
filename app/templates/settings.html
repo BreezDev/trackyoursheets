@@ -1,0 +1,219 @@
+{% extends 'base.html' %}
+{% block title %}Settings & Billing · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-lg-between align-items-lg-center mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-1">Profile, billing, and workspace settings</h1>
+    <p class="text-muted mb-0">Manage your contact details, subscription, and trial status. Launch the interactive guide for an on-screen tour anytime.</p>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.guide', back_to=url_for('main.settings')) }}">Open full guide</a>
+    <a class="btn btn-primary" href="{{ url_for('main.onboarding') }}">Start product tour</a>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Profile &amp; security</h2>
+      </div>
+      <form method="post" class="card-body">
+        <input type="hidden" name="intent" value="profile">
+        <div class="mb-3">
+          <label class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" value="{{ current_user.email }}" required>
+          <div class="form-text">Used for login and notifications.</div>
+        </div>
+        {% if current_user.producer %}
+        <div class="mb-3">
+          <label class="form-label">Display name</label>
+          <input type="text" name="display_name" class="form-control" value="{{ current_user.producer.display_name }}" placeholder="How teammates see you">
+        </div>
+        {% endif %}
+        <div class="mb-3">
+          <label class="form-label">New password</label>
+          <input type="password" name="new_password" class="form-control" placeholder="Leave blank to keep current password">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Confirm password</label>
+          <input type="password" name="confirm_password" class="form-control" placeholder="Re-enter new password">
+        </div>
+        <button class="btn btn-primary w-100" type="submit">Save changes</button>
+      </form>
+      <div class="card-footer bg-white">
+        <div class="small text-muted">Last login: {{ current_user.last_login.strftime('%b %d, %Y %I:%M %p') if current_user.last_login else 'No logins recorded yet.' }}</div>
+      </div>
+    </div>
+    <div class="card shadow-sm mt-4">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Workspace usage</h2>
+        <ul class="list-unstyled small mb-0">
+          <li><strong>{{ usage_snapshot.users }}</strong> active user{{ '' if usage_snapshot.users == 1 else 's' }}</li>
+          <li><strong>{{ usage_snapshot.workspaces }}</strong> workspace{{ '' if usage_snapshot.workspaces == 1 else 's' }}</li>
+          <li><strong>{{ usage_snapshot.producers }}</strong> producer{{ '' if usage_snapshot.producers == 1 else 's' }}</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-8">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-3">
+        <div>
+          <h2 class="h6 mb-0">Subscription plan</h2>
+          <p class="text-muted small mb-0">Current plan: {{ organization.plan.name if organization.plan else 'Not set' }}</p>
+        </div>
+        {% if can_manage_plan %}
+        <span class="badge bg-primary-soft text-primary">Admins &amp; agents can edit</span>
+        {% else %}
+        <span class="badge bg-secondary">Read only</span>
+        {% endif %}
+      </div>
+      <div class="card-body">
+        {% if not plans %}
+        <p class="text-muted mb-0">No plans are configured yet. Contact support to add tiers.</p>
+        {% else %}
+        <form method="post">
+          <input type="hidden" name="intent" value="plan">
+          <div class="row g-3">
+            {% for plan in plans %}
+            <div class="col-md-6">
+              <label class="plan-card form-check w-100 h-100">
+                <input
+                  class="form-check-input"
+                  type="radio"
+                  name="plan_id"
+                  value="{{ plan.id }}"
+                  {% if organization.plan_id == plan.id %}checked{% endif %}
+                  {% if not can_manage_plan %}disabled{% endif %}
+                >
+                <div class="plan-card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <span class="plan-name">{{ plan.name }}</span>
+                      <div class="plan-price">${{ '%.2f'|format(plan.price_per_user) }} <span class="text-muted">per user / mo</span></div>
+                    </div>
+                    {% if organization.plan_id == plan.id %}
+                    <span class="badge bg-success-soft text-success">Active</span>
+                    {% endif %}
+                  </div>
+                  <ul class="small text-muted mt-3 mb-0 ps-3">
+                    <li>Up to {{ plan.max_users }} users</li>
+                    <li>{{ plan.max_carriers }} carriers</li>
+                    <li>{{ plan.max_rows_per_month|int }} row limit per month</li>
+                    {% if plan.includes_api %}<li>API access included</li>{% endif %}
+                    {% if plan.includes_producer_portal %}<li>Producer portal</li>{% endif %}
+                    {% if plan.includes_quickbooks %}<li>QuickBooks export</li>{% endif %}
+                  </ul>
+                </div>
+              </label>
+            </div>
+            {% endfor %}
+          </div>
+          {% if can_manage_plan %}
+          <div class="d-flex justify-content-end mt-3">
+            <button class="btn btn-primary" type="submit">Update plan</button>
+          </div>
+          {% endif %}
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-4">
+      <div class="card-header bg-light d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-3">
+        <div>
+          <h2 class="h6 mb-0">Free trial controls</h2>
+          {% if organization.trial_ends_at %}
+          <p class="text-muted small mb-0">Trial ends {{ organization.trial_ends_at.strftime('%b %d, %Y') }}{% if trial_days_remaining is not none %} ({{ trial_days_remaining }} day{{ '' if trial_days_remaining == 1 else 's' }} remaining){% endif %}</p>
+          {% else %}
+          <p class="text-muted small mb-0">No active trial. Apply a coupon or extend to grant access.</p>
+          {% endif %}
+        </div>
+        {% if subscription %}
+        <span class="badge bg-info-soft text-info">Subscription status: {{ subscription.status or 'unknown' }}</span>
+        {% endif %}
+      </div>
+      <div class="card-body">
+        {% if can_manage_plan %}
+        <form method="post" class="row g-3 align-items-end">
+          <input type="hidden" name="intent" value="trial">
+          <div class="col-md-6">
+            <label class="form-label">Grant trial days</label>
+            <div class="input-group">
+              <input type="number" min="1" step="1" name="trial_days" class="form-control" value="15">
+              <span class="input-group-text">days</span>
+            </div>
+            <div class="form-text">Standard trial is 15 days. Extend or reset as needed.</div>
+          </div>
+          <div class="col-md-6 d-flex gap-2 justify-content-md-end">
+            <button class="btn btn-outline-danger" type="submit" name="action" value="end">End trial now</button>
+            <button class="btn btn-primary" type="submit">Save trial window</button>
+          </div>
+        </form>
+        {% else %}
+        <p class="text-muted mb-0">Contact an admin or agent to adjust the organisation trial.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-4">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Redeem a coupon</h2>
+      </div>
+      <div class="card-body">
+        {% if can_manage_plan %}
+        <form method="post" class="row g-3">
+          <input type="hidden" name="intent" value="redeem">
+          <div class="col-md-8">
+            <label class="form-label">Coupon code</label>
+            <input type="text" name="coupon_code" class="form-control" placeholder="e.g. 90DAYTRIAL" required>
+          </div>
+          <div class="col-md-4 d-flex align-items-end">
+            <button class="btn btn-primary w-100" type="submit">Apply code</button>
+          </div>
+        </form>
+        <div class="alert alert-secondary mt-3 mb-0" role="alert">
+          Recurring invoices follow the selected plan. Update seats or upgrade tiers here—changes apply to the next billing cycle automatically.
+        </div>
+        <p class="small text-muted mt-3 mb-0">Grant extended trials or promotional access. Codes can set plan tiers and extend trials by 30, 60, or 90 days.</p>
+        {% else %}
+        <p class="text-muted mb-0">Only admins and agents can redeem coupons.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_head %}
+{{ super() }}
+<style>
+  .plan-card {
+    border: 1px solid rgba(20, 33, 61, 0.15);
+    border-radius: 16px;
+    padding: 1rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    cursor: pointer;
+    background: white;
+  }
+  .plan-card:hover {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+  }
+  .plan-card .form-check-input {
+    float: right;
+  }
+  .plan-card .plan-card-body {
+    margin-top: 0.5rem;
+  }
+  .plan-card .plan-name {
+    font-weight: 600;
+    font-size: 1.05rem;
+  }
+  .plan-card .plan-price {
+    font-size: 0.95rem;
+    margin-top: 0.35rem;
+  }
+</style>
+{% endblock %}

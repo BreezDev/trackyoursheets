@@ -1,10 +1,15 @@
 {% extends 'base.html' %}
 {% block title %}Producer Leaderboard · TrackYourSheets{% endblock %}
 {% block content %}
+{% set active_tab = 'leaderboard' %}
+{% include 'admin/_subnav.html' %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h1 class="h3 mb-1">Producer leaderboard</h1>
     <p class="text-muted mb-0">Monitor performance and drill into individual sales. Totals refresh the moment overrides are applied.</p>
+    <div class="alert alert-primary mt-3 mb-0" role="alert">
+      Use <strong>View sales</strong> to open the editable ledger for each producer. Select rows to batch-update flat payouts, percentages, or splits in seconds.
+    </div>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('admin.index') }}">Back to admin</a>
 </div>

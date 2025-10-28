@@ -17,6 +17,12 @@ from .models import (
 )
 from .workspaces import get_accessible_workspace_ids
 
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
 
 reports_bp = Blueprint("reports", __name__)
 
@@ -154,6 +160,17 @@ def analytics_export():
     fmt = (request.args.get("format") or "csv").lower()
     filename = "analytics_report"
 
+    dataset["columns"] = [
+        {"key": "date", "label": "Date"},
+        {"key": "producer", "label": "Producer"},
+        {"key": "workspace", "label": "Workspace"},
+        {"key": "category", "label": "Category"},
+        {"key": "product_type", "label": "Product"},
+        {"key": "premium", "label": "Premium", "format": "currency"},
+        {"key": "commission", "label": "Commission", "format": "currency"},
+        {"key": "status", "label": "Status"},
+    ]
+
     if fmt == "pdf":
         pdf_bytes = _build_pdf_report("Analytics summary", dataset)
         return send_file(
@@ -228,6 +245,25 @@ def commission_sheet():
 
     transactions = query.order_by(CommissionTransaction.txn_date.asc()).all()
 
+    table_rows = [_commission_row(txn) for txn in transactions]
+    summary = {
+        "commission": sum(float(txn.amount or 0) for txn in transactions),
+        "premium": sum(float(txn.premium or 0) for txn in transactions),
+        "count": len(transactions),
+    }
+
+    columns = [
+        {"key": "date", "label": "Date"},
+        {"key": "producer", "label": "Producer"},
+        {"key": "workspace", "label": "Workspace"},
+        {"key": "policy", "label": "Policy"},
+        {"key": "category", "label": "Category"},
+        {"key": "premium", "label": "Premium", "format": "currency"},
+        {"key": "commission", "label": "Commission", "format": "currency"},
+        {"key": "split", "label": "Split"},
+        {"key": "status", "label": "Status"},
+    ]
+
     org_name = (
         current_user.organization.name
         if getattr(current_user, "organization", None) and current_user.organization
@@ -244,21 +280,14 @@ def commission_sheet():
         else "commission_sheet_all"
     )
 
+    dataset = {
+        "table": table_rows,
+        "summary": summary,
+        "columns": columns,
+    }
+
     if fmt == "pdf":
-        pdf_bytes = _build_pdf_report(
-            title,
-            {
-                "table": [
-                    _commission_row(txn)
-                    for txn in transactions
-                ],
-                "summary": {
-                    "commission": sum(float(txn.amount or 0) for txn in transactions),
-                    "premium": sum(float(txn.premium or 0) for txn in transactions),
-                    "count": len(transactions),
-                },
-            },
-        )
+        pdf_bytes = _build_pdf_report(title, dataset)
         return send_file(
             BytesIO(pdf_bytes),
             mimetype="application/pdf",
@@ -268,32 +297,147 @@ def commission_sheet():
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(
-        [
-            "Date",
-            "Producer",
-            "Workspace",
-            "Policy",
-            "Category",
-            "Premium",
-            "Commission",
-            "Split",
-            "Status",
-        ]
-    )
-    for txn in transactions:
-        row = _commission_row(txn)
+    writer.writerow([column["label"] for column in columns])
+    for row in table_rows:
         writer.writerow(
             [
-                row["date"],
-                row["producer"],
-                row["workspace"],
-                row["policy"],
-                row["category"],
-                f"{row['premium']:.2f}",
-                f"{row['commission']:.2f}",
-                row["split"],
-                row["status"],
+                _format_csv_value(row, column)
+                for column in columns
+            ]
+        )
+    output.seek(0)
+    return send_file(
+        BytesIO(output.getvalue().encode("utf-8")),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"{filename}.csv",
+    )
+
+
+@reports_bp.route("/production-summary")
+@login_required
+def production_summary():
+    fmt = (request.args.get("format") or "csv").lower()
+    producer_id = request.args.get("producer_id", type=int)
+
+    workspace_ids = get_accessible_workspace_ids(current_user)
+
+    producer = None
+    if producer_id:
+        producer = Producer.query.filter_by(
+            id=producer_id,
+            org_id=current_user.org_id,
+        ).first_or_404()
+        if (
+            current_user.role == "agent"
+            and workspace_ids
+            and producer.workspace_id not in workspace_ids
+        ):
+            abort(403)
+
+    query = CommissionTransaction.query.filter_by(org_id=current_user.org_id)
+    if workspace_ids:
+        query = query.filter(
+            or_(
+                CommissionTransaction.workspace_id.in_(workspace_ids),
+                CommissionTransaction.batch.has(ImportBatch.workspace_id.in_(workspace_ids)),
+            )
+        )
+    if producer:
+        query = query.filter(CommissionTransaction.producer_id == producer.id)
+
+    transactions = query.order_by(CommissionTransaction.txn_date.asc()).all()
+
+    aggregates = {}
+    for txn in transactions:
+        key = txn.producer_id or 0
+        if key not in aggregates:
+            producer_name = txn.producer.display_name if txn.producer else "Unassigned"
+            workspace_name = "Unassigned"
+            if txn.producer and txn.producer.workspace:
+                workspace_name = txn.producer.workspace.name
+            elif txn.workspace:
+                workspace_name = txn.workspace.name
+            elif txn.batch and txn.batch.workspace:
+                workspace_name = txn.batch.workspace.name
+            aggregates[key] = {
+                "producer": producer_name,
+                "workspace": workspace_name,
+                "premium": 0.0,
+                "commission": 0.0,
+                "sales": 0,
+            }
+        aggregates[key]["premium"] += float(txn.premium or 0)
+        aggregates[key]["commission"] += float(txn.amount or 0)
+        aggregates[key]["sales"] += 1
+
+    table_rows = [
+        {
+            "producer": data["producer"],
+            "workspace": data["workspace"],
+            "premium": round(data["premium"], 2),
+            "commission": round(data["commission"], 2),
+            "sales": data["sales"],
+        }
+        for data in aggregates.values()
+    ]
+
+    table_rows.sort(key=lambda row: row["premium"], reverse=True)
+
+    summary = {
+        "commission": sum(row["commission"] for row in table_rows),
+        "premium": sum(row["premium"] for row in table_rows),
+        "count": sum(row["sales"] for row in table_rows),
+    }
+
+    columns = [
+        {"key": "producer", "label": "Producer"},
+        {"key": "workspace", "label": "Workspace"},
+        {"key": "premium", "label": "Total premium", "format": "currency"},
+        {"key": "commission", "label": "Total commission", "format": "currency"},
+        {"key": "sales", "label": "Sales"},
+    ]
+
+    org_name = (
+        current_user.organization.name
+        if getattr(current_user, "organization", None) and current_user.organization
+        else f"Org {current_user.org_id}"
+    )
+
+    title = (
+        f"Production summary — {producer.display_name}"
+        if producer
+        else f"Production summary — {org_name}"
+    )
+    filename = (
+        f"production_summary_{producer.display_name.lower().replace(' ', '_')}"
+        if producer
+        else "production_summary_all"
+    )
+
+    dataset = {
+        "table": table_rows,
+        "summary": summary,
+        "columns": columns,
+    }
+
+    if fmt == "pdf":
+        pdf_bytes = _build_pdf_report(title, dataset)
+        return send_file(
+            BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{filename}.pdf",
+        )
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([column["label"] for column in columns])
+    for row in table_rows:
+        writer.writerow(
+            [
+                _format_csv_value(row, column)
+                for column in columns
             ]
         )
     output.seek(0)
@@ -461,80 +605,123 @@ def _parse_date(raw):
 def _build_pdf_report(title, dataset):
     summary = dataset.get("summary", {})
     table = dataset.get("table", [])
+    columns = dataset.get("columns", [])
 
-    lines = [title, ""]
-    lines.append(f"Total commission: ${summary.get('commission', 0):.2f}")
-    lines.append(f"Total premium: ${summary.get('premium', 0):.2f}")
-    lines.append(f"Transactions: {summary.get('count', 0)}")
-    lines.append("")
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        title=title,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.75 * inch,
+    )
 
-    for row in table[:40]:
-        lines.append(
-            f"{row.get('date')} · {row.get('producer')} · ${row.get('commission', 0):.2f}"
+    styles = getSampleStyleSheet()
+    brand_blue = colors.HexColor("#2A4BFF")
+    header_style = ParagraphStyle(
+        "ReportHeader",
+        parent=styles["Heading1"],
+        fontSize=22,
+        leading=28,
+        textColor=brand_blue,
+    )
+    subtitle_style = ParagraphStyle(
+        "ReportSubtitle",
+        parent=styles["Heading2"],
+        fontSize=14,
+        leading=18,
+    )
+
+    story = [
+        Paragraph("TrackYourSheets", header_style),
+        Paragraph(title, subtitle_style),
+        Spacer(1, 0.2 * inch),
+    ]
+
+    generated_at = datetime.utcnow().strftime("%b %d, %Y %I:%M %p UTC")
+    summary_rows = [
+        ["Generated", generated_at],
+        ["Total commission", f"${summary.get('commission', 0):,.2f}"],
+        ["Total premium", f"${summary.get('premium', 0):,.2f}"],
+        ["Transactions", f"{summary.get('count', 0):,}"],
+    ]
+    summary_table = Table(
+        [["Metric", "Value"], *summary_rows],
+        hAlign="LEFT",
+        colWidths=[2.3 * inch, 4.0 * inch],
+    )
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), brand_blue),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ("FONTSIZE", (0, 0), (-1, 0), 11),
+            ]
         )
+    )
+    story.append(summary_table)
+    story.append(Spacer(1, 0.3 * inch))
 
-    return _text_to_pdf_bytes(lines)
-
-
-def _text_to_pdf_bytes(lines):
-    if isinstance(lines, str):
-        text_lines = lines.splitlines()
+    if columns and table:
+        header_row = [column["label"] for column in columns]
+        max_rows = 200
+        data_rows = []
+        for row in table[:max_rows]:
+            rendered_cells = []
+            for column in columns:
+                value = row.get(column["key"])
+                if column.get("format") == "currency" and value is not None:
+                    try:
+                        rendered_cells.append(f"${float(value):,.2f}")
+                    except (TypeError, ValueError):
+                        rendered_cells.append("$0.00")
+                else:
+                    rendered_cells.append(str(value) if value not in {None, ""} else "—")
+            data_rows.append(rendered_cells)
+        tabular_data = [header_row, *data_rows]
+        pdf_table = Table(tabular_data, repeatRows=1)
+        pdf_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), brand_blue),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 10),
+                    ("FONTSIZE", (0, 1), (-1, -1), 9),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        story.append(pdf_table)
+        if len(table) > max_rows:
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(
+                Paragraph(
+                    f"Showing first {max_rows} rows of {len(table)}. Export CSV for the full data set.",
+                    styles["Italic"],
+                )
+            )
     else:
-        text_lines = list(lines)
-    if not text_lines:
-        text_lines = [""]
-
-    content_parts = ["BT /F1 12 Tf 72 720 Td"]
-    for index, line in enumerate(text_lines):
-        safe_line = (
-            (line or "")
-            .replace("\\", "\\\\")
-            .replace("(", "\\(")
-            .replace(")", "\\)")
-        )
-        if index == 0:
-            content_parts.append(f"({safe_line}) Tj")
+        body_style = styles["BodyText"]
+        if table:
+            for row in table:
+                story.append(Paragraph(str(row), body_style))
+                story.append(Spacer(1, 0.1 * inch))
         else:
-            content_parts.append(f"0 -16 Td ({safe_line}) Tj")
-    content_parts.append("ET")
-    content_stream = "\n".join(content_parts)
-    content_bytes = content_stream.encode("latin-1")
+            story.append(Paragraph("No transactions available for this report.", body_style))
 
-    parts = []
-    offsets = []
-    total = 0
-
-    def append_bytes(value):
-        nonlocal total
-        if isinstance(value, str):
-            data = value.encode("latin-1")
-        else:
-            data = value
-        parts.append(data)
-        total += len(data)
-
-    def append_obj(value):
-        offsets.append(total)
-        append_bytes(value)
-
-    append_bytes("%PDF-1.4\n")
-    append_obj("1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n")
-    append_obj("2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n")
-    append_obj(
-        "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj\n"
-    )
-    append_obj(
-        f"4 0 obj<< /Length {len(content_bytes)} >>stream\n{content_stream}\nendstream\nendobj\n"
-    )
-    append_obj("5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n")
-
-    xref_offset = total
-    append_bytes("xref\n0 6\n0000000000 65535 f \n")
-    for offset in offsets:
-        append_bytes(f"{offset:010d} 00000 n \n")
-    append_bytes(f"trailer<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF")
-
-    return b"".join(parts)
+    document.build(story)
+    return buffer.getvalue()
 
 
 def _commission_row(txn):
@@ -565,6 +752,18 @@ def _commission_row(txn):
         "link": url_for("reports.activity_detail", txn_id=txn.id),
     }
     return row
+
+
+def _format_csv_value(row, column):
+    value = row.get(column["key"])
+    if value is None:
+        return ""
+    if column.get("format") == "currency":
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return "0.00"
+    return value
 
 
 def _fetch_status_categories(org_id: int):

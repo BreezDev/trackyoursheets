@@ -94,3 +94,32 @@ body {
 .toast {
   min-width: 280px;
 }
+
+.admin-subnav {
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow: 0 12px 30px rgba(20, 33, 61, 0.08);
+  padding: 1rem 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.admin-subnav .nav-link {
+  border-radius: 999px;
+  font-weight: 500;
+  color: #495057;
+  padding: 0.5rem 1.25rem;
+}
+
+.admin-subnav .nav-link.active {
+  background: #0d6efd;
+  color: #ffffff;
+  box-shadow: 0 6px 20px rgba(13, 110, 253, 0.35);
+}
+
+.admin-subnav .nav-link:hover {
+  color: #0d6efd;
+}
+
+.guide-layout .card {
+  border-radius: 18px;
+}

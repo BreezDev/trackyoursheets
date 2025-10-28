@@ -10,6 +10,10 @@
     <div class="mb-2">
       <a class="btn btn-outline-primary btn-sm" href="{{ url_for('reports.analytics_dashboard') }}">Open interactive charts</a>
     </div>
+    <div class="btn-group mb-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('reports.production_summary', format='csv') }}">Production CSV</a>
+      <a class="btn btn-primary btn-sm" href="{{ url_for('reports.production_summary', format='pdf') }}">Production PDF</a>
+    </div>
     <div class="small text-muted">Generated {{ generated_at.strftime('%b %d, %Y %H:%M UTC') }}</div>
   </div>
 </div>

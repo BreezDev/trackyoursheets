@@ -47,18 +47,27 @@ The landing card summarises your plan, usage, and quick stats. Billing plan chan
 
 ## Subscription rule updates
 
-All plan entitlements live in the `subscription_plans` table (`app/models.py`). To adjust pricing, seat limits, or billing cadence:
+All plan entitlements live in the `subscription_plans` table (`app/models.py`). To adjust pricing, seat limits, or billing cadence without touching Stripe:
 
 1. Open a Flask shell: `flask shell`.
 2. Load the target plan, e.g. `plan = SubscriptionPlan.query.filter_by(name="Scale").first()`.
-3. Update any attribute – `plan.price_per_user = Decimal("199.00")`, `plan.max_users = 25`, `plan.max_rows_per_month = 150000`, etc.
-4. Commit with `db.session.commit()`.
+3. Update any attribute – `plan.price_per_user = Decimal("199.00")`, `plan.max_users = 25`, `plan.max_carriers = 25`, `plan.max_rows_per_month = 150000`, etc.
+4. Persist the change with `db.session.commit()`.
 
-Trials and expirations live on `Organization.trial_ends_at` plus the `subscriptions` table for active billing. Adjust those timestamps to change plan length (e.g. set a new `trial_ends_at` or `Subscription.trial_end`). When Stripe is connected, webhook handlers should replace manual edits.
+Length of plan / trial settings are controlled per-organisation:
+
+1. `org = Organization.query.get(<org_id>)`
+2. Adjust `org.trial_ends_at` or set `org.trial_ends_at = datetime.utcnow() + timedelta(days=15)` to grant the standard 15-day trial.
+3. For paying tenants, update or create a `Subscription` record: `sub = Subscription.query.filter_by(org_id=org.id).first()` then set `sub.plan`, `sub.status`, `sub.trial_end`, `sub.next_bill_at`, etc.
+4. `db.session.commit()` once the organisation-level adjustments are ready.
+
+Seat limits (team member amount) are enforced by the plan’s `max_users`. Price changes rely on the same `price_per_user` column; if you need tiered or flat billing, store the amount on the plan and use it during invoice generation.
+
+When Stripe integration is active, webhook handlers should authorise these changes automatically. Until then, the admin console plus the steps above keep billing aligned with your contract.
 
 ## Workspace email notifications via Nylas
 
-`app/nylas_email.py` now exposes task-focused helpers around the Nylas v3 send endpoint. Wire them into admin workflows as follows:
+`app/nylas_email.py` exposes helpers around the Nylas v3 send endpoint. Wire them into admin workflows as follows:
 
 1. Ensure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` environment variables are set.
 2. For import summaries, call `send_import_notification(recipient, workspace, uploader, period, summary_rows)`.
@@ -68,25 +77,19 @@ Both helpers log failures to the Flask app logger so you can troubleshoot withou
 
 ## Master admin bootstrap account
 
-Create a top-level console user with the provided credentials so you always have a fallback super-admin:
+The application now provisions a fallback master admin automatically during startup. Customise it with environment variables:
 
-```python
-from app import create_app, db
-from app.models import User
+- `MASTER_ADMIN_EMAIL` (default: `insurance@audimi.co.site`)
+- `MASTER_ADMIN_PASSWORD` (default: `Tofu`)
+- `MASTER_ADMIN_ORG_NAME` (default: `Master Admin`)
 
-app = create_app()
-with app.app_context():
-    email = "insurance@audimi.co.site"
-    password = "Tofu"
-    existing = User.query.filter_by(email=email).first()
-    if not existing:
-        user = User(email=email, role="owner", org_id=1)
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
-```
+On first run the seeder will:
 
-Update `org_id` if your master organisation uses a different primary key. Once created, sign in at `/admin` and manage every workspace from the Master Admin dashboard (planned feature) or directly through organisation filters.
+1. Create the organisation defined by `MASTER_ADMIN_ORG_NAME` (or reuse an existing one).
+2. Attach the lowest-tier plan if the org has none so limits stay permissive.
+3. Create an owner-level user with the configured email/password.
+
+If you prefer to manage the bootstrap user manually, unset `MASTER_ADMIN_EMAIL` or `MASTER_ADMIN_PASSWORD` before launching the app.
 
 ## Import operations
 
