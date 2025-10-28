@@ -1,4 +1,18 @@
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+import hashlib
+import io
+import secrets
+from datetime import datetime
+
+from flask import (
+    Blueprint,
+    flash,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 from flask_login import current_user, login_required
 
 from . import db
@@ -55,7 +69,11 @@ def index():
             .all()
         )
         plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
-        api_keys = APIKey.query.filter_by(org_id=current_user.org_id).all()
+        api_keys = (
+            APIKey.query.filter_by(org_id=current_user.org_id)
+            .order_by(APIKey.created_at.desc())
+            .all()
+        )
     else:
         workspaces = get_accessible_workspaces(current_user)
         unique_offices = {ws.office for ws in workspaces if ws and ws.office}
@@ -88,6 +106,18 @@ def index():
             .order_by(Producer.display_name.asc())
             .all()
         )
+    api_key_tokens = session.get("api_key_tokens", {})
+    new_key_id = request.args.get("new_key_id")
+    revealed_api_key = None
+    if new_key_id and new_key_id in api_key_tokens:
+        key_obj = next((key for key in api_keys if str(key.id) == new_key_id), None)
+        if key_obj:
+            revealed_api_key = {
+                "id": key_obj.id,
+                "label": key_obj.label,
+                "token": api_key_tokens[new_key_id],
+            }
+
     return render_template(
         "admin/index.html",
         org=org,
@@ -100,6 +130,8 @@ def index():
         api_keys=api_keys,
         plans=plans,
         accessible_workspace_ids=workspace_ids,
+        revealed_api_key=revealed_api_key,
+        downloadable_api_keys=set(api_key_tokens.keys()),
     )
 
 
@@ -356,14 +388,89 @@ def delete_rule(rule_id):
 
 @admin_bp.route("/api-keys", methods=["POST"])
 def create_api_key():
+    if current_user.role not in {"owner", "admin"}:
+        flash("Only owners and admins can create API keys.", "danger")
+        return redirect(url_for("admin.index"))
+
     label = request.form.get("label")
     if not label:
         flash("Label required.", "danger")
         return redirect(url_for("admin.index"))
 
-    token_hash = f"demo-{label}"  # Placeholder for secure hashing implementation
-    key = APIKey(org_id=current_user.org_id, label=label, token_hash=token_hash, scopes=["imports", "reports"])
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    key = APIKey(
+        org_id=current_user.org_id,
+        label=label,
+        token_hash=token_hash,
+        token_prefix=raw_token[:8],
+        token_last4=raw_token[-4:],
+        scopes=["imports", "reports"],
+    )
     db.session.add(key)
     db.session.commit()
-    flash("API key placeholder created. Update with secure token before production.", "warning")
+    token_store = session.get("api_key_tokens", {})
+    token_store[str(key.id)] = raw_token
+    session["api_key_tokens"] = token_store
+    session.modified = True
+    flash("API key generated. Copy or download it now; it will not be shown again.", "success")
+    return redirect(url_for("admin.index", new_key_id=key.id))
+
+
+@admin_bp.route("/api-keys/<int:key_id>/download")
+def download_api_key(key_id: int):
+    if current_user.role not in {"owner", "admin"}:
+        flash("You do not have access to this API key.", "danger")
+        return redirect(url_for("admin.index"))
+
+    token_store = session.get("api_key_tokens", {})
+    token = token_store.get(str(key_id))
+    if not token:
+        flash("API keys can only be downloaded immediately after creation.", "warning")
+        return redirect(url_for("admin.index"))
+
+    key = APIKey.query.filter_by(id=key_id, org_id=current_user.org_id).first_or_404()
+    if not key.is_active:
+        flash("This API key has been revoked and cannot be downloaded.", "danger")
+        return redirect(url_for("admin.index"))
+
+    filename = f"{key.label.lower().replace(' ', '_')}_api_key.txt"
+    content = (
+        "TrackYourSheets API key\n"
+        f"Label: {key.label}\n"
+        f"Token: {token}\n"
+        f"Generated: {key.created_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+    )
+    buffer = io.BytesIO(content.encode("utf-8"))
+    token_store.pop(str(key_id), None)
+    session["api_key_tokens"] = token_store
+    session.modified = True
+    return send_file(
+        buffer,
+        mimetype="text/plain",
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+@admin_bp.route("/api-keys/<int:key_id>/revoke", methods=["POST"])
+def revoke_api_key(key_id: int):
+    if current_user.role not in {"owner", "admin"}:
+        flash("Only owners and admins can revoke API keys.", "danger")
+        return redirect(url_for("admin.index"))
+
+    key = APIKey.query.filter_by(id=key_id, org_id=current_user.org_id).first_or_404()
+    if not key.is_active:
+        flash("API key already revoked.", "info")
+        return redirect(url_for("admin.index"))
+
+    key.revoked_at = datetime.utcnow()
+    db.session.add(key)
+    db.session.commit()
+    token_store = session.get("api_key_tokens", {})
+    if str(key_id) in token_store:
+        token_store.pop(str(key_id), None)
+        session["api_key_tokens"] = token_store
+        session.modified = True
+    flash("API key revoked.", "success")
     return redirect(url_for("admin.index"))

@@ -343,6 +343,19 @@ class APIKey(TimestampMixin, db.Model):
     token_hash = db.Column(db.String(128), nullable=False)
     label = db.Column(db.String(120), nullable=False)
     scopes = db.Column(db.JSON, default=list)
+    token_prefix = db.Column(db.String(16))
+    token_last4 = db.Column(db.String(4))
+    revoked_at = db.Column(db.DateTime)
+
+    @property
+    def is_active(self) -> bool:
+        return self.revoked_at is None
+
+    @property
+    def masked_token(self) -> str:
+        if self.token_last4:
+            return f"•••• {self.token_last4}"
+        return "Not available"
 
 
 class AuditLog(TimestampMixin, db.Model):
