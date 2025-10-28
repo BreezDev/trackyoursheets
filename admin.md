@@ -69,7 +69,7 @@ When Stripe integration is active, webhook handlers should authorise these chang
 
 `app/nylas_email.py` exposes helpers around the Nylas v3 send endpoint. Wire them into admin workflows as follows:
 
-1. Ensure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` environment variables are set.
+1. Ensure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, `NYLAS_FROM_EMAIL`, and (optionally) `NYLAS_FROM_NAME`, `NYLAS_NOTIFICATION_EMAILS`, `NYLAS_SIGNUP_ALERT_EMAILS` environment variables are set.
 2. For import summaries, call `send_import_notification(recipient, workspace, uploader, period, summary_rows)`.
 3. For workspace invitations, call `send_workspace_invitation(recipient, inviter, workspace, role)` immediately after committing the new user record.
 
@@ -103,14 +103,14 @@ Although managed on `/imports`, admins should periodically:
 
 ## Email notifications
 
-- Configure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` environment variables to enable Nylas-powered import summaries.
+- Configure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` (plus `NYLAS_NOTIFICATION_EMAILS` for CCs) to enable Nylas-powered notifications.
 - When a producer uploads a CSV, the workspace agent receives an email summarising row counts per carrier.
 
 ## Security best practices
 
 - Enforce strong `SECRET_KEY` and move to HTTPS behind PythonAnywhere.
 - Configure regular backups using scheduled tasks plus off-site storage.
-- When Stripe is enabled, ensure webhook signing secrets are stored as environment variables.
+- When Stripe is enabled, ensure webhook signing secrets are stored as environment variables and map plan IDs to Stripe prices.
 - Use the audit log table (`audit_log`) to trace changes for compliance.
 - Encourage workspace leads to maintain shared notes via the dashboard board — the content lives in `workspace_notes` and is visible to all workspace members.
 

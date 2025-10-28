@@ -5,6 +5,7 @@ from flask_login import current_user, login_required, login_user, logout_user
 
 from . import db
 from .models import Organization, SubscriptionPlan, Subscription, User
+from .nylas_email import send_signup_alert, send_signup_welcome
 
 
 auth_bp = Blueprint("auth", __name__)
@@ -56,6 +57,8 @@ def signup():
                 db.session.add(user)
                 db.session.add(subscription)
                 db.session.commit()
+                send_signup_welcome(user, org)
+                send_signup_alert(user, org)
                 login_user(user)
                 flash("Welcome to TrackYourSheets!", "success")
                 return redirect(url_for("main.onboarding"))

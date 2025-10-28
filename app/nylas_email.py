@@ -2,10 +2,173 @@
 from __future__ import annotations
 
 import os
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, MutableMapping, Optional, Sequence, Union
 
 import requests
 from flask import current_app
+
+EmailRecipient = Union[str, Mapping[str, str]]
+
+
+def _split_emails(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part and part.strip()]
+
+
+def _deduplicate(recipients: Sequence[Mapping[str, str]]) -> list[Mapping[str, str]]:
+    seen: set[str] = set()
+    deduped: list[Mapping[str, str]] = []
+    for entry in recipients:
+        email = (entry.get("email") or "").lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        deduped.append(entry)
+    return deduped
+
+
+def _normalize_recipients(recipients: Sequence[EmailRecipient]) -> list[MutableMapping[str, str]]:
+    normalised: list[MutableMapping[str, str]] = []
+    for recipient in recipients:
+        if isinstance(recipient, str):
+            email = recipient.strip()
+            if email:
+                normalised.append({"email": email})
+        elif isinstance(recipient, Mapping):
+            email = (recipient.get("email") or "").strip()
+            if not email:
+                continue
+            entry: MutableMapping[str, str] = {"email": email}
+            name = (recipient.get("name") or "").strip()
+            if name:
+                entry["name"] = name
+            normalised.append(entry)
+    return _deduplicate(normalised)
+
+
+def _nylas_config() -> dict:
+    app = current_app._get_current_object()
+    return {
+        "api_key": app.config.get("NYLAS_API_KEY") or os.environ.get("NYLAS_API_KEY"),
+        "grant_id": app.config.get("NYLAS_GRANT_ID") or os.environ.get("NYLAS_GRANT_ID"),
+        "base_url": app.config.get("NYLAS_API_BASE_URL")
+        or os.environ.get("NYLAS_API_BASE_URL", "https://api.nylas.com"),
+        "from_email": app.config.get("NYLAS_FROM_EMAIL") or os.environ.get("NYLAS_FROM_EMAIL"),
+        "from_name": app.config.get("NYLAS_FROM_NAME")
+        or os.environ.get("NYLAS_FROM_NAME", "TrackYourSheets"),
+        "reply_to": _split_emails(
+            app.config.get("NYLAS_REPLY_TO") or os.environ.get("NYLAS_REPLY_TO")
+        ),
+        "default_notifications": _split_emails(
+            app.config.get("NYLAS_NOTIFICATION_EMAILS")
+            or os.environ.get("NYLAS_NOTIFICATION_EMAILS")
+        ),
+        "signup_alerts": _split_emails(
+            app.config.get("NYLAS_SIGNUP_ALERT_EMAILS")
+            or os.environ.get("NYLAS_SIGNUP_ALERT_EMAILS")
+            or app.config.get("NYLAS_ALERT_RECIPIENTS")
+            or os.environ.get("NYLAS_ALERT_RECIPIENTS")
+        ),
+    }
+
+
+def _send_email(
+    *,
+    recipients: Sequence[EmailRecipient],
+    subject: str,
+    body: str,
+    sender_email: Optional[str] = None,
+    sender_name: Optional[str] = None,
+    reply_to: Optional[Sequence[EmailRecipient]] = None,
+    send_at: Optional[int] = None,
+    is_html: bool = False,
+    metadata: Optional[Mapping[str, object]] = None,
+) -> bool:
+    if not recipients:
+        return False
+
+    config = _nylas_config()
+    api_key = config.get("api_key")
+    grant_id = config.get("grant_id")
+    from_email = sender_email or config.get("from_email")
+    if not api_key or not grant_id or not from_email:
+        current_app.logger.info(
+            "Skipping Nylas send; configuration incomplete.",
+            extra={
+                "has_api_key": bool(api_key),
+                "has_grant": bool(grant_id),
+                "has_from": bool(from_email),
+            },
+        )
+        return False
+
+    to_payload = _normalize_recipients(recipients)
+    if not to_payload:
+        return False
+
+    payload: dict[str, object] = {
+        "from": {
+            "email": from_email,
+            "name": sender_name or config.get("from_name") or "TrackYourSheets",
+        },
+        "to": to_payload,
+        "subject": subject,
+        "body": body,
+        "is_plaintext": not is_html,
+    }
+
+    effective_reply_to: list[EmailRecipient] = []
+    if reply_to:
+        effective_reply_to.extend(reply_to)
+    elif config.get("reply_to"):
+        effective_reply_to.extend(config["reply_to"])
+    if effective_reply_to:
+        payload["reply_to"] = _normalize_recipients(effective_reply_to)
+
+    if send_at:
+        payload["send_at"] = int(send_at)
+    if metadata:
+        payload["metadata"] = dict(metadata)
+
+    base_url = (config.get("base_url") or "https://api.nylas.com").rstrip("/")
+    url = f"{base_url}/v3/grants/{grant_id}/messages/send"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        if response.status_code >= 400:
+            current_app.logger.warning(
+                "Nylas send failed",
+                extra={"status": response.status_code, "body": response.text},
+            )
+            return False
+    except Exception as exc:  # pragma: no cover - network failures logged only
+        current_app.logger.warning("Nylas send error", exc_info=exc)
+        return False
+    return True
+
+
+def send_notification_email(
+    recipients: Sequence[EmailRecipient],
+    subject: str,
+    body: str,
+    *,
+    include_default_recipients: bool = True,
+    metadata: Optional[Mapping[str, object]] = None,
+) -> bool:
+    config = _nylas_config()
+    target_list: list[EmailRecipient] = list(recipients or [])
+    if include_default_recipients:
+        target_list.extend(config.get("default_notifications", []))
+    if not target_list:
+        return False
+    return _send_email(
+        recipients=target_list,
+        subject=subject,
+        body=body,
+        metadata=metadata,
+    )
 
 
 def send_import_notification(
@@ -16,28 +179,14 @@ def send_import_notification(
     summary: Iterable[Mapping[str, object]],
 ) -> None:
     """Send a summary email when a statement import is uploaded."""
-    # api_key = os.environ.get("nyk_v0_eR1G99LoiMU4mhsZAv6Koo8ehZK6gQGNKUjTnIjevR5gSeq0htoZtrf5Mn4cI2Nl")
-    # grant_id = os.environ.get("54ddffa7-3b11-4982-a9a0-75a544c97e80")
-    # from_email = os.environ.get("itstheplugg@gmail.com", uploader.email)
-    api_key = os.environ.get("NYLAS_API_KEY")
-    grant_id = os.environ.get("NYLAS_GRANT_ID")
-    from_email = os.environ.get("NYLAS_FROM_EMAIL", uploader.email)
-
-
-    if not api_key or not grant_id or not recipient:
-        current_app.logger.info(
-            "Skipping Nylas notification; configuration incomplete.",
-            extra={"recipient": recipient, "grant_id": bool(grant_id)},
-        )
-        return
 
     subject = f"New commission import for {workspace.name}"
     office_name = workspace.office.name if getattr(workspace, "office", None) else ""
 
     lines = [
         f"Workspace: {workspace.name}",
-        *( [f"Office: {office_name}"] if office_name else [] ),
-        f"Uploaded by: {uploader.email}",
+        *([f"Office: {office_name}"] if office_name else []),
+        f"Uploaded by: {getattr(uploader, 'email', 'Unknown uploader')}",
         f"Statement period: {period}",
         "",
         "Carrier breakdown:",
@@ -47,27 +196,18 @@ def send_import_notification(
         rows = item.get("rows", 0)
         lines.append(f" • {carrier}: {rows} row(s)")
 
-    body_text = "\n".join(lines)
-
-    payload = {
-        "from": {"email": from_email, "name": uploader.email},
-        "to": [{"email": recipient}],
-        "subject": subject,
-        "body": body_text,
-    }
-
-    url = f"https://api.nylas.com/v3/grants/{grant_id}/messages/send"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code >= 400:
-            current_app.logger.warning(
-                "Nylas notification failed",
-                extra={"status": response.status_code, "body": response.text},
-            )
-    except Exception as exc:  # pragma: no cover - network failures logged only
-        current_app.logger.warning("Nylas notification error", exc_info=exc)
+    _send_email(
+        recipients=[recipient],
+        subject=subject,
+        body="\n".join(lines),
+        sender_email=getattr(uploader, "email", None),
+        sender_name=getattr(uploader, "email", None),
+        reply_to=[getattr(uploader, "email", "")] if getattr(uploader, "email", None) else None,
+        metadata={
+            "workspace_id": getattr(workspace, "id", None),
+            "period": period,
+        },
+    )
 
 
 def send_workspace_invitation(
@@ -76,23 +216,11 @@ def send_workspace_invitation(
     workspace,
     role: str,
 ) -> None:
-    api_key = os.environ.get("nyk_v0_eR1G99LoiMU4mhsZAv6Koo8ehZK6gQGNKUjTnIjevR5gSeq0htoZtrf5Mn4cI2Nl")
-    grant_id = os.environ.get("54ddffa7-3b11-4982-a9a0-75a544c97e80")
-    from_email = os.environ.get("itstheplugg@gmail.com", inviter.email if inviter else None)
-
-    if not api_key or not grant_id or not recipient:
-        current_app.logger.info(
-            "Skipping invitation email; configuration incomplete.",
-            extra={"recipient": recipient, "grant_id": bool(grant_id)},
-        )
-        return
-
-    subject = f"You're invited to {workspace.name} on TrackYourSheets"
-    inviter_name = inviter.email if inviter else "A teammate"
+    inviter_name = getattr(inviter, "email", None) or "A teammate"
     body = (
         "\n".join(
             [
-                f"Hi there,",
+                "Hi there,",
                 "",
                 f"{inviter_name} invited you to join the {workspace.name} workspace on TrackYourSheets.",
                 f"Role: {role.title()}",
@@ -105,22 +233,67 @@ def send_workspace_invitation(
         )
     )
 
-    payload = {
-        "from": {"email": from_email or inviter.email, "name": inviter_name},
-        "to": [{"email": recipient}],
-        "subject": subject,
-        "body": body,
-    }
+    _send_email(
+        recipients=[recipient],
+        subject=f"You're invited to {workspace.name} on TrackYourSheets",
+        body=body,
+        sender_email=getattr(inviter, "email", None),
+        sender_name=inviter_name,
+        reply_to=[getattr(inviter, "email", "")] if getattr(inviter, "email", None) else None,
+        metadata={
+            "workspace_id": getattr(workspace, "id", None),
+            "role": role,
+        },
+    )
 
-    url = f"https://api.nylas.com/v3/grants/{grant_id}/messages/send"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code >= 400:
-            current_app.logger.warning(
-                "Workspace invitation email failed",
-                extra={"status": response.status_code, "body": response.text},
-            )
-    except Exception as exc:  # pragma: no cover
-        current_app.logger.warning("Workspace invitation email error", exc_info=exc)
+def send_signup_welcome(user, organization) -> None:
+    if not getattr(user, "email", None):
+        return
+    org_name = getattr(organization, "name", "TrackYourSheets")
+    subject = "Welcome to TrackYourSheets"
+    body = "\n".join(
+        [
+            f"Hi {user.email},",
+            "",
+            "Thanks for starting your TrackYourSheets trial!",
+            f"Your organisation, {org_name}, is live with a 15-day trial to explore producer payouts, import automation, and workspace collaboration.",
+            "",
+            "Get started by:",
+            " • Adding your first workspace and agent",
+            " • Uploading a carrier statement to see the pipeline in action",
+            " • Inviting teammates from the admin console",
+            "",
+            "Need help? Reply to this email and our team will jump in.",
+            "",
+            "Let's build with you,",
+            "TrackYourSheets Support",
+        ]
+    )
+    _send_email(
+        recipients=[user.email],
+        subject=subject,
+        body=body,
+    )
+
+
+def send_signup_alert(user, organization) -> None:
+    config = _nylas_config()
+    recipients = config.get("signup_alerts", [])
+    if not recipients:
+        return
+    org_name = getattr(organization, "name", "Unknown org")
+    lines = [
+        "New organisation signup",
+        "",
+        f"Organisation: {org_name}",
+        f"User: {getattr(user, 'email', 'Unknown user')}",
+    ]
+    if getattr(organization, "plan", None):
+        lines.append(f"Selected plan: {organization.plan.name}")
+    _send_email(
+        recipients=recipients,
+        subject=f"New TrackYourSheets signup: {org_name}",
+        body="\n".join(lines),
+        metadata={"org_id": getattr(organization, "id", None)},
+    )

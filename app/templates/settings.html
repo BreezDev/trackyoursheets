@@ -74,6 +74,16 @@
         {% if not plans %}
         <p class="text-muted mb-0">No plans are configured yet. Contact support to add tiers.</p>
         {% else %}
+        {% if stripe_enabled %}
+        <div class="alert alert-info d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-2" role="alert">
+          <div>
+            <strong>Stripe billing is enabled.</strong> Use checkout to activate upgrades and launch the billing portal to manage payment methods.
+          </div>
+          {% if stripe_mode %}
+          <span class="badge bg-info-soft text-info text-uppercase">{{ stripe_mode }} mode</span>
+          {% endif %}
+        </div>
+        {% endif %}
         <form method="post">
           <input type="hidden" name="intent" value="plan">
           <div class="row g-3">
@@ -112,11 +122,19 @@
             {% endfor %}
           </div>
           {% if can_manage_plan %}
-          <div class="d-flex justify-content-end mt-3">
+          <div class="d-flex justify-content-end flex-wrap gap-2 mt-3">
+            {% if stripe_enabled %}
+            <button class="btn btn-outline-primary" type="submit" name="checkout_with_stripe" value="1">Checkout with Stripe</button>
+            {% endif %}
             <button class="btn btn-primary" type="submit">Update plan</button>
           </div>
           {% endif %}
         </form>
+        {% if stripe_enabled and can_manage_plan %}
+        <form method="post" action="{{ url_for('main.open_billing_portal') }}" class="mt-3">
+          <button class="btn btn-outline-secondary" type="submit">Open Stripe billing portal</button>
+        </form>
+        {% endif %}
         {% endif %}
       </div>
     </div>

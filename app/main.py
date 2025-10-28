@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from flask import (
     Blueprint,
+    current_app,
     render_template,
     request,
     jsonify,
@@ -31,6 +32,7 @@ from .models import (
 from .guides import get_role_guides, get_interactive_tour
 from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces, user_can_access_workspace
 from . import db
+from .nylas_email import send_notification_email
 
 
 main_bp = Blueprint("main", __name__)
@@ -60,6 +62,16 @@ def _note_meta(note):
         "timestamp": _format_timestamp(note.updated_at),
         "iso": note.updated_at.isoformat() if note.updated_at else None,
     }
+
+
+def _billing_contacts(organization) -> list[str]:
+    if not organization or not getattr(organization, "users", None):
+        return []
+    emails = []
+    for user in organization.users:
+        if user.role in {"owner", "admin"} and getattr(user, "email", None):
+            emails.append(user.email)
+    return emails
 
 
 def _serialize_chat_message(message: WorkspaceChatMessage) -> dict:
@@ -202,6 +214,11 @@ def settings():
     )
     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
     can_manage_plan = current_user.role in {"owner", "admin", "agent"}
+    stripe_gateway = current_app.extensions.get("stripe_gateway")
+    stripe_enabled = bool(stripe_gateway and getattr(stripe_gateway, "is_configured", False) and stripe_gateway.is_configured)
+
+    if stripe_gateway and not getattr(stripe_gateway, "is_configured", False):
+        stripe_enabled = False
 
     if request.method == "POST":
         intent = request.form.get("intent")
@@ -267,6 +284,30 @@ def settings():
                 flash("Selected plan could not be found.", "danger")
                 return redirect(url_for("main.settings"))
 
+            if request.form.get("checkout_with_stripe"):
+                if not stripe_enabled:
+                    flash("Stripe checkout is not configured for this environment.", "warning")
+                    return redirect(url_for("main.settings"))
+                seat_count = max(User.query.filter_by(org_id=org.id).count(), 1)
+                success_url = url_for("main.settings", _external=True)
+                cancel_url = success_url
+                try:
+                    checkout_url = stripe_gateway.create_checkout_session(
+                        organization=org,
+                        plan=plan,
+                        quantity=seat_count,
+                        success_url=success_url,
+                        cancel_url=cancel_url,
+                    )
+                except Exception as exc:  # pragma: no cover - Stripe errors logged only
+                    current_app.logger.error("Stripe checkout session failed", exc_info=exc)
+                    flash(
+                        "We couldn't start the Stripe checkout session. Please try again or contact support.",
+                        "danger",
+                    )
+                    return redirect(url_for("main.settings"))
+                return redirect(checkout_url)
+
             org.plan_id = plan.id
             if subscription:
                 subscription.plan = plan.name
@@ -282,6 +323,18 @@ def settings():
 
             db.session.commit()
             flash(f"Plan updated to {plan.name}.", "success")
+            recipients = _billing_contacts(org) or [current_user.email]
+            message_lines = [
+                f"Organisation: {org.name}",
+                f"Updated by: {current_user.email}",
+                f"New plan: {plan.name}",
+            ]
+            send_notification_email(
+                recipients=recipients,
+                subject=f"Plan updated to {plan.name}",
+                body="\n".join(message_lines),
+                metadata={"org_id": org.id, "plan_id": plan.id},
+            )
             return redirect(url_for("main.settings"))
 
         if intent == "trial":
@@ -297,6 +350,19 @@ def settings():
                     subscription.trial_end = None
                 db.session.commit()
                 flash("Trial ended. Billing continues on the selected plan.", "info")
+                recipients = _billing_contacts(org) or [current_user.email]
+                send_notification_email(
+                    recipients=recipients,
+                    subject=f"Trial ended for {org.name}",
+                    body="\n".join(
+                        [
+                            f"Organisation: {org.name}",
+                            f"Updated by: {current_user.email}",
+                            "Trial status: Ended",
+                        ]
+                    ),
+                    metadata={"org_id": org.id, "action": "trial_end"},
+                )
                 return redirect(url_for("main.settings"))
 
             trial_days = request.form.get("trial_days")
@@ -328,6 +394,19 @@ def settings():
             flash(
                 f"Trial extended through {new_trial_end.strftime('%b %d, %Y')}.",
                 "success",
+            )
+            recipients = _billing_contacts(org) or [current_user.email]
+            send_notification_email(
+                recipients=recipients,
+                subject=f"Trial updated for {org.name}",
+                body="\n".join(
+                    [
+                        f"Organisation: {org.name}",
+                        f"Updated by: {current_user.email}",
+                        f"New trial end: {new_trial_end.strftime('%b %d, %Y')}",
+                    ]
+                ),
+                metadata={"org_id": org.id, "action": "trial_extend"},
             )
             return redirect(url_for("main.settings"))
 
@@ -406,6 +485,22 @@ def settings():
                 f"Coupon {code.upper()} applied successfully.",
                 "success",
             )
+            recipients = _billing_contacts(org) or [current_user.email]
+            message_lines = [
+                f"Organisation: {org.name}",
+                f"Updated by: {current_user.email}",
+                f"Coupon code: {code.upper()}",
+            ]
+            if coupon.trial_extension_days:
+                message_lines.append(f"Trial extended by {coupon.trial_extension_days} day(s)")
+            if applied_plan:
+                message_lines.append(f"Applied plan: {applied_plan.name}")
+            send_notification_email(
+                recipients=recipients,
+                subject=f"Coupon {code.upper()} applied",
+                body="\n".join(message_lines),
+                metadata={"org_id": org.id, "coupon": code.upper()},
+            )
             return redirect(url_for("main.settings"))
 
     trial_days_remaining = None
@@ -419,6 +514,14 @@ def settings():
         "producers": Producer.query.filter_by(org_id=org.id).count(),
     }
 
+    stripe_publishable_key = None
+    if stripe_gateway and getattr(stripe_gateway, "publishable_key", None):
+        stripe_publishable_key = stripe_gateway.publishable_key
+    elif current_app.config.get("STRIPE_PUBLISHABLE_KEY"):
+        stripe_publishable_key = current_app.config.get("STRIPE_PUBLISHABLE_KEY")
+
+    stripe_mode = getattr(stripe_gateway, "mode", None) if stripe_enabled else None
+
     return render_template(
         "settings.html",
         plans=plans,
@@ -427,7 +530,35 @@ def settings():
         trial_days_remaining=trial_days_remaining,
         can_manage_plan=can_manage_plan,
         usage_snapshot=usage_snapshot,
+        stripe_enabled=stripe_enabled,
+        stripe_mode=stripe_mode,
+        stripe_publishable_key=stripe_publishable_key,
     )
+
+
+@main_bp.route("/billing/portal", methods=["POST"])
+@login_required
+def open_billing_portal():
+    if current_user.role not in {"owner", "admin", "agent"}:
+        abort(403)
+    org = Organization.query.get_or_404(current_user.org_id)
+    stripe_gateway = current_app.extensions.get("stripe_gateway")
+    if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
+        flash("Stripe billing portal is not configured.", "warning")
+        return redirect(url_for("main.settings"))
+    try:
+        portal_url = stripe_gateway.create_billing_portal_session(
+            organization=org,
+            return_url=url_for("main.settings", _external=True),
+        )
+    except Exception as exc:  # pragma: no cover - Stripe errors logged only
+        current_app.logger.error("Stripe billing portal error", exc_info=exc)
+        flash(
+            "We couldn't open the Stripe billing portal. Please try again or contact support.",
+            "danger",
+        )
+        return redirect(url_for("main.settings"))
+    return redirect(portal_url)
 
 
 @main_bp.route("/notes/<scope>", methods=["POST"])

@@ -1,4 +1,5 @@
 import os
+
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
@@ -25,6 +26,22 @@ def create_app(test_config=None):
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
     )
 
+    app.config.setdefault("NYLAS_API_BASE_URL", os.environ.get("NYLAS_API_BASE_URL", "https://api.nylas.com"))
+    app.config.setdefault("NYLAS_API_KEY", os.environ.get("NYLAS_API_KEY"))
+    app.config.setdefault("NYLAS_GRANT_ID", os.environ.get("NYLAS_GRANT_ID"))
+    app.config.setdefault("NYLAS_FROM_EMAIL", os.environ.get("NYLAS_FROM_EMAIL"))
+    app.config.setdefault("NYLAS_FROM_NAME", os.environ.get("NYLAS_FROM_NAME", "TrackYourSheets"))
+    app.config.setdefault("NYLAS_REPLY_TO", os.environ.get("NYLAS_REPLY_TO"))
+    app.config.setdefault("NYLAS_ALERT_RECIPIENTS", os.environ.get("NYLAS_ALERT_RECIPIENTS"))
+    app.config.setdefault(
+        "NYLAS_NOTIFICATION_EMAILS",
+        os.environ.get("NYLAS_NOTIFICATION_EMAILS"),
+    )
+    app.config.setdefault(
+        "NYLAS_SIGNUP_ALERT_EMAILS",
+        os.environ.get("NYLAS_SIGNUP_ALERT_EMAILS"),
+    )
+
     if test_config:
         app.config.update(test_config)
 
@@ -47,12 +64,15 @@ def create_app(test_config=None):
     from .admin import admin_bp
     from .imports import imports_bp
     from .reports import reports_bp
+    from .stripe_integration import init_stripe
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(imports_bp, url_prefix="/imports")
     app.register_blueprint(reports_bp, url_prefix="/reports")
+
+    init_stripe(app)
 
     login_manager.login_view = "auth.login"
 
