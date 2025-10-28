@@ -4,6 +4,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import or_
 
 from .models import AuditLog, CommissionTransaction, ImportBatch, Workspace, WorkspaceNote
+from .guides import get_role_guides
 from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces, user_can_access_workspace
 from . import db
 
@@ -91,6 +92,13 @@ def dashboard():
 @login_required
 def onboarding():
     return render_template("onboarding.html")
+
+
+@main_bp.route("/guide")
+@login_required
+def guide():
+    sections = get_role_guides()
+    return render_template("guide.html", sections=sections)
 
 
 @main_bp.route("/notes/<scope>", methods=["POST"])

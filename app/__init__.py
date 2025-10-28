@@ -40,6 +40,7 @@ def create_app(test_config=None):
     with app.app_context():
         db.create_all()
         _ensure_schema_extensions()
+        _ensure_master_admin()
         _seed_default_categories()
     from .auth import auth_bp
     from .main import main_bp
@@ -175,4 +176,38 @@ def _get_or_create_category(org_id: int, name: str, kind: str) -> None:
         return
     tag = CategoryTag(org_id=org_id, name=name, kind=kind, is_default=True)
     db.session.add(tag)
+    db.session.commit()
+
+
+def _ensure_master_admin() -> None:
+    """Create a fallback master admin user if one does not already exist."""
+
+    from .models import Organization, SubscriptionPlan, User
+
+    master_email = os.environ.get("MASTER_ADMIN_EMAIL", "insurance@audimi.co.site")
+    master_password = os.environ.get("MASTER_ADMIN_PASSWORD", "Tofu")
+    master_org_name = os.environ.get("MASTER_ADMIN_ORG_NAME", "Master Admin")
+
+    if not master_email or not master_password:
+        return
+
+    existing_user = User.query.filter_by(email=master_email).first()
+    if existing_user:
+        return
+
+    master_org = Organization.query.filter_by(name=master_org_name).first()
+    if not master_org:
+        plan = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).first()
+        master_org = Organization(name=master_org_name, plan_id=plan.id if plan else None)
+        db.session.add(master_org)
+        db.session.flush()
+    elif master_org.plan_id is None:
+        plan = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).first()
+        if plan:
+            master_org.plan_id = plan.id
+            db.session.add(master_org)
+
+    user = User(email=master_email, role="owner", org_id=master_org.id)
+    user.set_password(master_password)
+    db.session.add(user)
     db.session.commit()
