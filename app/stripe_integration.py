@@ -1,5 +1,7 @@
 """Stripe integration helpers for TrackYourSheets."""
 from __future__ import annotations
+from dotenv import load_dotenv
+load_dotenv()
 
 import os
 from typing import Dict, Optional
