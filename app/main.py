@@ -93,6 +93,29 @@ def _serialize_chat_message(message: WorkspaceChatMessage) -> dict:
     }
 
 
+def _audit_actor_label(actor, actor_id: int | None) -> str:
+    if actor:
+        return _display_user_name(actor)
+    if actor_id is None:
+        return "System automation"
+    return f"User #{actor_id}"
+
+
+def _serialize_audit_event(event: AuditLog, actor_lookup: dict[int, User]) -> dict:
+    actor = actor_lookup.get(event.actor_user_id) if actor_lookup else None
+    return {
+        "id": event.id,
+        "action": event.action,
+        "entity": event.entity,
+        "entity_id": event.entity_id,
+        "actor_display": _audit_actor_label(actor, event.actor_user_id),
+        "timestamp": event.ts,
+        "timestamp_display": _format_timestamp(event.ts),
+        "before": event.before,
+        "after": event.after,
+    }
+
+
 @main_bp.route("/")
 def landing():
     if current_user.is_authenticated:
@@ -145,12 +168,26 @@ def dashboard():
         txns_total = txn_query.count()
     else:
         txns_total = 0
-    audit_events = (
-        AuditLog.query.filter_by(org_id=org_id)
-        .order_by(AuditLog.ts.desc())
-        .limit(5)
-        .all()
+    audit_query = AuditLog.query.filter_by(org_id=org_id)
+    audit_total = audit_query.count()
+    recent_audit_events = (
+        audit_query.order_by(AuditLog.ts.desc()).limit(5).all()
     )
+    actor_ids = {
+        event.actor_user_id
+        for event in recent_audit_events
+        if event.actor_user_id is not None
+    }
+    actor_lookup: dict[int, User] = {}
+    if actor_ids:
+        actor_lookup = {
+            user.id: user
+            for user in User.query.filter(User.id.in_(actor_ids)).all()
+        }
+    audit_entries = [
+        _serialize_audit_event(event, actor_lookup)
+        for event in recent_audit_events
+    ]
     personal_note = None
     shared_note = None
     chat_messages = []
@@ -191,7 +228,8 @@ def dashboard():
         "dashboard.html",
         imports=imports,
         txns_total=txns_total,
-        audit_events=audit_events,
+        audit_entries=audit_entries,
+        audit_total=audit_total,
         workspaces=workspaces,
         active_workspace=active_workspace,
         personal_note=personal_note,
@@ -200,6 +238,64 @@ def dashboard():
         shared_note_meta=_note_meta(shared_note),
         chat_messages=chat_messages,
         chat_messages_payload=chat_payload,
+    )
+
+
+@main_bp.route("/audit")
+@login_required
+def audit_trail():
+    if current_user.role not in {"owner", "admin", "agent"}:
+        flash("You do not have access to the audit trail.", "danger")
+        return redirect(url_for("main.dashboard"))
+
+    org_id = current_user.org_id
+    search_term = (request.args.get("q") or "").strip()
+    actor_filter = request.args.get("actor", type=int)
+
+    base_query = AuditLog.query.filter_by(org_id=org_id)
+    if search_term:
+        like_term = f"%{search_term}%"
+        base_query = base_query.filter(
+            or_(AuditLog.action.ilike(like_term), AuditLog.entity.ilike(like_term))
+        )
+    if actor_filter:
+        base_query = base_query.filter(AuditLog.actor_user_id == actor_filter)
+
+    total_matches = base_query.count()
+    ordered_query = base_query.order_by(AuditLog.ts.desc())
+    audit_records = ordered_query.limit(200).all()
+
+    actor_ids = {
+        record.actor_user_id
+        for record in audit_records
+        if record.actor_user_id is not None
+    }
+    actor_lookup: dict[int, User] = {}
+    if actor_ids:
+        actor_lookup = {
+            user.id: user
+            for user in User.query.filter(User.id.in_(actor_ids)).all()
+        }
+
+    entries = [
+        _serialize_audit_event(record, actor_lookup)
+        for record in audit_records
+    ]
+
+    actors = (
+        User.query.filter_by(org_id=org_id)
+        .order_by(User.email.asc())
+        .all()
+    )
+
+    return render_template(
+        "audit.html",
+        entries=entries,
+        actors=actors,
+        search=search_term,
+        actor_filter=actor_filter,
+        total_matches=total_matches,
+        result_limit=200,
     )
 
 
@@ -464,6 +560,10 @@ def settings():
         "producers": Producer.query.filter_by(org_id=org.id).count(),
         "carriers": Carrier.query.filter_by(org_id=org.id).count(),
     }
+    seat_limit = org.plan.max_users if org.plan and org.plan.max_users else None
+    seats_remaining = None
+    if seat_limit is not None:
+        seats_remaining = max(seat_limit - usage_snapshot["users"], 0)
 
     stripe_publishable_key = None
     if stripe_gateway and getattr(stripe_gateway, "publishable_key", None):
@@ -480,6 +580,8 @@ def settings():
         subscription=subscription,
         can_manage_plan=can_manage_plan,
         usage_snapshot=usage_snapshot,
+        seat_limit=seat_limit,
+        seats_remaining=seats_remaining,
         plan_details_map=plan_details_map,
         current_plan_detail=current_plan_detail,
         plan_limits=plan_limits,

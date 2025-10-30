@@ -70,6 +70,10 @@ def index():
         .filter(User.status == "active")
         .count()
     )
+    seat_limit = org.plan.max_users if org.plan and org.plan.max_users else None
+    seats_remaining = None
+    if seat_limit is not None:
+        seats_remaining = max(seat_limit - seat_usage, 0)
     carrier_usage = Carrier.query.filter_by(org_id=current_user.org_id).count()
     producer_usage = Producer.query.filter_by(org_id=current_user.org_id).count()
     if current_user.role in {"owner", "admin"}:
@@ -149,10 +153,15 @@ def index():
     plan_permissions = {
         "can_invite_producers": True,
         "can_create_api_keys": False,
+        "invite_disabled_reason": None,
     }
     if org.plan:
-        plan_permissions["can_invite_producers"] = org.plan.includes_producer_portal
         plan_permissions["can_create_api_keys"] = org.plan.includes_api
+        if seat_limit is not None and seat_usage >= seat_limit:
+            plan_permissions["can_invite_producers"] = False
+            plan_permissions[
+                "invite_disabled_reason"
+            ] = f"{org.plan.name} includes up to {seat_limit} seats. Upgrade to add more teammates."
 
     return render_template(
         "admin/index.html",
@@ -172,6 +181,8 @@ def index():
         current_plan_detail=current_plan_detail,
         plan_permissions=plan_permissions,
         seat_usage=seat_usage,
+        seat_limit=seat_limit,
+        seats_remaining=seats_remaining,
         carrier_usage=carrier_usage,
         producer_usage=producer_usage,
     )
@@ -213,13 +224,6 @@ def create_user():
                 "warning",
             )
             return redirect(url_for("admin.index"))
-        if role == "producer" and not plan.includes_producer_portal:
-            flash(
-                "Producer portals are not included in your current plan. Upgrade to invite producers.",
-                "warning",
-            )
-            return redirect(url_for("admin.index"))
-
     target_workspace = None
     invited_workspace = None
     if role in {"agent", "producer"}:
@@ -402,14 +406,6 @@ def create_carrier():
     if not name:
         flash("Carrier name is required.", "danger")
     else:
-        if plan and plan.max_carriers:
-            existing_carriers = Carrier.query.filter_by(org_id=org.id).count()
-            if existing_carriers >= plan.max_carriers:
-                flash(
-                    f"{plan.name} includes up to {plan.max_carriers} carriers. Upgrade your plan to add more connections.",
-                    "warning",
-                )
-                return redirect(url_for("admin.index"))
         carrier = Carrier(name=name, download_type=download_type, org_id=org.id)
         db.session.add(carrier)
         db.session.commit()

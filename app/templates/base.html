@@ -31,6 +31,11 @@
             <li class="nav-item">
               <a class="nav-link" href="{{ url_for('reports.overview') }}">Reports</a>
             </li>
+            {% if current_user.role in ['owner', 'admin', 'agent'] %}
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('main.audit_trail') }}">Audit</a>
+            </li>
+            {% endif %}
             <li class="nav-item">
               <a class="nav-link" href="{{ url_for('main.guide') }}">Guide</a>
             </li>
