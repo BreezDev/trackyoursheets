@@ -105,7 +105,7 @@ def create_app(test_config=None):
                 max_carriers=5,
                 max_rows_per_month=15000,
                 includes_quickbooks=False,
-                includes_producer_portal=False,
+                includes_producer_portal=True,
                 includes_api=False,
             )
             growth = SubscriptionPlan(
