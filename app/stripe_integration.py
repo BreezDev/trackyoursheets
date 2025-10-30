@@ -108,6 +108,7 @@ class StripeGateway:
             billing_address_collection="auto",
             allow_promotion_codes=True,
             automatic_tax={"enabled": True},
+            customer_update={"address": "auto"},
             line_items=[{"price": price_id, "quantity": seat_quantity}],
             client_reference_id=client_reference_id,
             metadata=metadata_payload,

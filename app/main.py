@@ -286,7 +286,7 @@ def settings():
                 flash("Selected plan could not be found.", "danger")
                 return redirect(url_for("main.settings"))
 
-            if organization.plan_id == plan.id:
+            if org.plan_id == plan.id:
                 flash("You're already on this plan.", "info")
                 return redirect(url_for("main.settings"))
 
