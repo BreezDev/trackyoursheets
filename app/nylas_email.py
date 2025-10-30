@@ -109,11 +109,15 @@ def _send_email(
     if not to_payload:
         return False
 
+    from_payload: MutableMapping[str, str] = {"email": from_email}
+    sender_identity = sender_name or config.get("from_name") or "TrackYourSheets"
+    if sender_identity:
+        sender_identity = sender_identity.strip()
+        if sender_identity:
+            from_payload["name"] = sender_identity
+
     payload: dict[str, object] = {
-        "from": {
-            "email": from_email,
-            "name": sender_name or config.get("from_name") or "TrackYourSheets",
-        },
+        "from": [from_payload],
         "to": to_payload,
         "subject": subject,
         "body": body,
