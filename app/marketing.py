@@ -50,7 +50,7 @@ def _plan_access_level(plan: SubscriptionPlan) -> str:
 def _plan_feature_points(plan: SubscriptionPlan) -> list[str]:
     features: list[str] = []
     features.append(_format_cap("Team seats", plan.max_users))
-    features.append(_format_cap("Carrier connections", plan.max_carriers))
+    features.append("Unlimited carrier connections & data sync")
     features.append(_format_cap("Rows reconciled / month", plan.max_rows_per_month))
     features.append("Real-time dashboard & anomaly detection")
     if plan.includes_quickbooks:
@@ -109,7 +109,6 @@ def build_plan_details(
                 "is_recommended": index == 1,
                 "limits": {
                     "max_users": plan.max_users,
-                    "max_carriers": plan.max_carriers,
                     "max_rows_per_month": plan.max_rows_per_month,
                     "includes_quickbooks": plan.includes_quickbooks,
                     "includes_producer_portal": plan.includes_producer_portal,

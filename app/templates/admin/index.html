@@ -26,22 +26,21 @@
         <ul class="list-unstyled small mb-0">
           <li>
             <strong>{{ seat_usage }}</strong> active seat{{ '' if seat_usage == 1 else 's' }}
-            {% if plan_limits and plan_limits['max_users'] %}
-            <span class="text-muted">of {{ plan_limits['max_users'] }}</span>
+            {% if seat_limit %}
+            <span class="text-muted">of {{ seat_limit }}</span>
+            {% if seats_remaining is not none %}
+            <span class="badge {{ 'bg-success-soft text-success' if seats_remaining else 'bg-warning-soft text-warning' }} ms-1">
+              {{ 'No seats remaining' if seats_remaining == 0 else seats_remaining ~ ' left' }}
+            </span>
+            {% endif %}
             {% endif %}
           </li>
           <li><strong>{{ workspaces|length }}</strong> workspace{{ '' if workspaces|length == 1 else 's' }}</li>
           <li>
             <strong>{{ producer_usage }}</strong> producer{{ '' if producer_usage == 1 else 's' }}
-            {% if plan_limits and not plan_limits['includes_producer_portal'] %}
-            <span class="badge bg-warning-soft text-warning ms-1">Upgrade for portals</span>
-            {% endif %}
           </li>
           <li>
             <strong>{{ carrier_usage }}</strong> carrier{{ '' if carrier_usage == 1 else 's' }}
-            {% if plan_limits and plan_limits['max_carriers'] %}
-            <span class="text-muted">of {{ plan_limits['max_carriers'] }}</span>
-            {% endif %}
           </li>
         </ul>
       </div>
@@ -98,7 +97,12 @@
         {% if plan_permissions.can_invite_producers %}
         <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#inviteUserModal">{{ 'Add producer' if current_user.role == 'agent' else 'Invite' }}</button>
         {% else %}
-        <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upgrade to invite producers</button>
+        <div class="d-flex flex-column align-items-end gap-1">
+          <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upgrade to add seats</button>
+          {% if plan_permissions.invite_disabled_reason %}
+          <span class="text-muted small text-end">{{ plan_permissions.invite_disabled_reason }}</span>
+          {% endif %}
+        </div>
         {% endif %}
       </div>
       <div class="list-group list-group-flush">

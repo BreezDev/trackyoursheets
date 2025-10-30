@@ -53,16 +53,16 @@
             <strong>{{ usage_snapshot.users }}</strong> active user{{ '' if usage_snapshot.users == 1 else 's' }}
             {% if plan_limits and plan_limits['max_users'] %}
             <span class="text-muted">of {{ plan_limits['max_users'] }} seats</span>
+            {% if seats_remaining is not none %}
+            <span class="badge {{ 'bg-success-soft text-success' if seats_remaining else 'bg-warning-soft text-warning' }} ms-1">
+              {{ 'No seats remaining' if seats_remaining == 0 else seats_remaining ~ ' left' }}
+            </span>
+            {% endif %}
             {% endif %}
           </li>
           <li><strong>{{ usage_snapshot.workspaces }}</strong> workspace{{ '' if usage_snapshot.workspaces == 1 else 's' }}</li>
           <li><strong>{{ usage_snapshot.producers }}</strong> producer{{ '' if usage_snapshot.producers == 1 else 's' }}</li>
-          {% if plan_limits and plan_limits['max_carriers'] %}
-          <li>
-            <strong>{{ usage_snapshot.carriers }}</strong> carrier{{ '' if usage_snapshot.carriers == 1 else 's' }}
-            <span class="text-muted">of {{ plan_limits['max_carriers'] }}</span>
-          </li>
-          {% endif %}
+          <li><strong>{{ usage_snapshot.carriers }}</strong> carrier{{ '' if usage_snapshot.carriers == 1 else 's' }}</li>
         </ul>
       </div>
     </div>
@@ -133,7 +133,7 @@
                       {% endfor %}
                     {% else %}
                       <li>Up to {{ plan.max_users }} users</li>
-                      <li>{{ plan.max_carriers }} carriers</li>
+                      <li>Unlimited carrier connections & automations</li>
                       <li>{{ plan.max_rows_per_month|int }} row limit per month</li>
                     {% endif %}
                   </ul>

@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+{% block title %}Audit trail · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-lg-between align-items-lg-center mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-1">Audit trail</h1>
+    <p class="text-muted mb-0">Search and review every change captured for your organization. Filter by teammate or keyword to investigate activity quickly.</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
+</div>
+
+<form class="card shadow-sm mb-4" method="get">
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label" for="auditSearch">Search actions or entities</label>
+        <input
+          type="text"
+          id="auditSearch"
+          name="q"
+          value="{{ search }}"
+          class="form-control"
+          placeholder="e.g. payout approved"
+        >
+      </div>
+      <div class="col-md-4">
+        <label class="form-label" for="auditActor">Actor</label>
+        <select id="auditActor" name="actor" class="form-select">
+          <option value="">All teammates</option>
+          {% for actor in actors %}
+          <option value="{{ actor.id }}" {% if actor_filter == actor.id %}selected{% endif %}>{{ actor.email }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-flex gap-2">
+        <button class="btn btn-primary w-100" type="submit">Filter</button>
+        <a class="btn btn-outline-secondary w-100" href="{{ url_for('main.audit_trail') }}">Reset</a>
+      </div>
+    </div>
+  </div>
+  <div class="card-footer bg-white text-muted small">
+    {% if total_matches %}
+    Showing {{ entries|length }} of {{ total_matches }} event{{ '' if total_matches == 1 else 's' }}{% if total_matches > result_limit %} (latest {{ result_limit }}){% endif %}.
+    {% else %}
+    No audit events found yet.
+    {% endif %}
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="list-group list-group-flush">
+    {% for entry in entries %}
+    <div class="list-group-item">
+      <div class="d-flex flex-column flex-md-row justify-content-md-between align-items-md-start gap-2">
+        <div>
+          <div class="fw-semibold">{{ entry.action }}</div>
+          <div class="text-muted small">
+            {% if entry.entity %}{{ entry.entity }}{% else %}Entity not recorded{% endif %}
+            {% if entry.entity_id %}· #{{ entry.entity_id }}{% endif %}
+          </div>
+          <div class="text-muted small">{{ entry.actor_display }} · {{ entry.timestamp_display }}</div>
+        </div>
+        <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#auditEntry{{ entry.id }}" aria-expanded="false" aria-controls="auditEntry{{ entry.id }}">
+          View details
+        </button>
+      </div>
+      <div class="collapse mt-3" id="auditEntry{{ entry.id }}">
+        <div class="bg-light border rounded p-3">
+          {% if entry.before %}
+          <h6 class="small text-uppercase text-muted fw-semibold">Before</h6>
+          <pre class="small mb-3">{{ entry.before | tojson(indent=2) }}</pre>
+          {% endif %}
+          {% if entry.after %}
+          <h6 class="small text-uppercase text-muted fw-semibold">After</h6>
+          <pre class="small mb-0">{{ entry.after | tojson(indent=2) }}</pre>
+          {% endif %}
+          {% if not entry.before and not entry.after %}
+          <p class="small text-muted mb-0">No field-level context was recorded for this action.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="list-group-item text-center text-muted py-5">
+      Use the filters above to find audit activity or return later after more actions are tracked.
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
