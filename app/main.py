@@ -35,6 +35,12 @@ from .guides import get_role_guides, get_interactive_tour
 from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces, user_can_access_workspace
 from . import db
 from .nylas_email import send_notification_email
+from .marketing import (
+    build_plan_details,
+    marketing_highlights,
+    marketing_metrics,
+    marketing_timeline,
+)
 
 
 main_bp = Blueprint("main", __name__)
@@ -87,6 +93,23 @@ def _serialize_chat_message(message: WorkspaceChatMessage) -> dict:
 
 
 @main_bp.route("/")
+def landing():
+    if current_user.is_authenticated:
+        return redirect(url_for("main.dashboard"))
+
+    plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
+    plan_details = build_plan_details(plans)
+
+    return render_template(
+        "landing.html",
+        plan_details=plan_details,
+        hero_metrics=marketing_metrics(),
+        feature_sections=marketing_highlights(),
+        timeline_steps=marketing_timeline(),
+    )
+
+
+@main_bp.route("/dashboard")
 @login_required
 def dashboard():
     org_id = current_user.org_id

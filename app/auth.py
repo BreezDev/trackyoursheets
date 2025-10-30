@@ -9,6 +9,7 @@ from . import db
 from .models import Organization, SubscriptionPlan, Subscription, User
 from .nylas_email import send_signup_alert, send_signup_welcome
 from sqlalchemy import func
+from .marketing import build_plan_details
 
 
 auth_bp = Blueprint("auth", __name__)
@@ -21,6 +22,7 @@ def signup():
 
     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
     default_plan = plans[0] if plans else None
+    plan_details = build_plan_details(plans)
 
     if request.method == "POST":
         org_name = request.form.get("org_name")
@@ -37,7 +39,12 @@ def signup():
             stripe_gateway = current_app.extensions.get("stripe_gateway")
             if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
                 flash("Stripe payments are not configured. Contact support for assistance.", "danger")
-                return render_template("signup.html", plans=plans, default_plan=default_plan)
+                return render_template(
+                    "signup.html",
+                    plans=plans,
+                    default_plan=default_plan,
+                    plan_details=plan_details,
+                )
 
             org = Organization(
                 name=org_name,
@@ -60,7 +67,12 @@ def signup():
             except Exception:
                 db.session.rollback()
                 flash("We couldn't create your workspace. Please try again.", "danger")
-                return render_template("signup.html", plans=plans, default_plan=default_plan)
+                return render_template(
+                    "signup.html",
+                    plans=plans,
+                    default_plan=default_plan,
+                    plan_details=plan_details,
+                )
 
             seat_quantity = 1
             success_url = url_for(
@@ -92,13 +104,23 @@ def signup():
                     "We couldn't start Stripe checkout. Please verify your billing details and try again.",
                     "danger",
                 )
-                return render_template("signup.html", plans=plans, default_plan=default_plan)
+                return render_template(
+                    "signup.html",
+                    plans=plans,
+                    default_plan=default_plan,
+                    plan_details=plan_details,
+                )
 
             db.session.commit()
             flash("Redirecting to secure checkout to activate your subscription.", "info")
             return redirect(checkout_url)
 
-    return render_template("signup.html", plans=plans, default_plan=default_plan)
+    return render_template(
+        "signup.html",
+        plans=plans,
+        default_plan=default_plan,
+        plan_details=plan_details,
+    )
 
 
 @auth_bp.route("/signup/cancelled")
