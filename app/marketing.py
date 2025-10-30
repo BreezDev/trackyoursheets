@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Iterable
+from typing import Iterable, Optional
+
+from flask import current_app
 
 from .models import SubscriptionPlan
 
@@ -67,20 +69,52 @@ def _plan_feature_points(plan: SubscriptionPlan) -> list[str]:
     return features
 
 
-def build_plan_details(plans: Iterable[SubscriptionPlan]) -> list[dict]:
+def build_plan_details(
+    plans: Iterable[SubscriptionPlan],
+    *,
+    stripe_gateway=None,
+) -> list[dict]:
+    if stripe_gateway is None:
+        try:
+            stripe_gateway = current_app.extensions.get("stripe_gateway")
+        except RuntimeError:  # pragma: no cover - accessing outside app context
+            stripe_gateway = None
+
     plan_details: list[dict] = []
     for index, plan in enumerate(plans):
         price_label = _format_currency(plan.price_per_user)
+        billing_interval = "month"
+        price_amount: Optional[float] = float(plan.price_per_user or 0)
+        price_source = "database"
+        if stripe_gateway and getattr(stripe_gateway, "is_configured", False):
+            pricing_snapshot = stripe_gateway.plan_pricing(plan)
+            if pricing_snapshot and pricing_snapshot.get("label"):
+                price_label = pricing_snapshot["label"]
+                billing_interval = pricing_snapshot.get("interval") or billing_interval
+                amount_decimal = pricing_snapshot.get("amount_decimal")
+                if amount_decimal is not None:
+                    price_amount = float(amount_decimal)
+                price_source = "stripe"
         plan_details.append(
             {
                 "id": plan.id,
                 "name": plan.name,
                 "price_label": price_label,
-                "price_per_user": float(plan.price_per_user or 0),
+                "price_per_user": price_amount,
+                "price_source": price_source,
+                "billing_interval": billing_interval,
                 "tagline": _plan_tagline(plan),
                 "access_level": _plan_access_level(plan),
                 "feature_points": _plan_feature_points(plan),
                 "is_recommended": index == 1,
+                "limits": {
+                    "max_users": plan.max_users,
+                    "max_carriers": plan.max_carriers,
+                    "max_rows_per_month": plan.max_rows_per_month,
+                    "includes_quickbooks": plan.includes_quickbooks,
+                    "includes_producer_portal": plan.includes_producer_portal,
+                    "includes_api": plan.includes_api,
+                },
             }
         )
     return plan_details

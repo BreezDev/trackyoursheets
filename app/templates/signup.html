@@ -8,8 +8,11 @@
         <h1 class="h4 mb-3">Launch your TrackYourSheets workspace</h1>
         <p class="text-muted">Create your organization, invite your first teammates, and connect carriers in minutes.</p>
         {% if default_plan %}
+        {% set signup_detail = plan_details_map.get(default_plan.id) if plan_details_map else default_plan_detail %}
+        {% set signup_price_label = signup_detail.price_label if signup_detail and signup_detail.price_label else '$' ~ ('%.2f'|format(default_plan.price_per_user)) %}
+        {% set signup_interval = signup_detail.billing_interval if signup_detail and signup_detail.billing_interval else 'month' %}
         <div class="alert alert-info" role="alert">
-          <strong>{{ default_plan.name }}</strong> is pre-selected for signup. Checkout will confirm payment of ${{ '%.2f'|format(default_plan.price_per_user) }} per user each month.
+          <strong>{{ default_plan.name }}</strong> is pre-selected for signup. Checkout will confirm payment of {{ signup_price_label }} per user each {{ signup_interval }}.
         </div>
         {% endif %}
         <form method="post" class="mt-3">
@@ -55,7 +58,12 @@
           </div>
           <h3 class="h5 mb-1">{{ plan.name }}</h3>
           <p class="small text-muted mb-3">{{ plan.tagline }}</p>
-          <div class="h2 text-primary fw-bold mb-3">{{ plan.price_label }}<span class="fs-6 fw-normal text-muted"> / user</span></div>
+          <div class="h2 text-primary fw-bold mb-2">{{ plan.price_label }}<span class="fs-6 fw-normal text-muted"> / user / {{ plan.billing_interval }}</span></div>
+          {% if plan.price_source == 'stripe' %}
+          <div class="small text-muted mb-3">Live pricing from Stripe</div>
+          {% else %}
+          <div class="small text-muted mb-3">Standard monthly pricing</div>
+          {% endif %}
           <ul class="list-unstyled d-grid gap-2 small text-body-secondary mb-0">
             {% for item in plan.feature_points[:4] %}
             <li class="d-flex gap-2">

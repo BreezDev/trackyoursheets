@@ -13,16 +13,36 @@
       <div class="card-body">
         <h3 class="h5 mb-1">{{ org.name }}</h3>
         {% if org.plan %}
-        <p class="text-muted small mb-3">Plan: {{ org.plan.name }}</p>
+        <p class="text-muted small mb-1">Plan: {{ org.plan.name }}</p>
+        {% if current_plan_detail and current_plan_detail.price_label %}
+        <p class="text-muted small mb-3">Billing: {{ current_plan_detail.price_label }} / user / {{ current_plan_detail.billing_interval }}</p>
+        {% else %}
+        <p class="text-muted small mb-3">Billing: Contact support to confirm pricing</p>
+        {% endif %}
         {% else %}
         <p class="text-muted small mb-3">Plan: <span class="text-warning">Not set</span></p>
         {% endif %}
         <h4 class="h6 text-uppercase text-muted mt-4">Usage</h4>
         <ul class="list-unstyled small mb-0">
-          <li><strong>{{ users|length }}</strong> team member{{ '' if users|length == 1 else 's' }}</li>
+          <li>
+            <strong>{{ seat_usage }}</strong> active seat{{ '' if seat_usage == 1 else 's' }}
+            {% if plan_limits and plan_limits['max_users'] %}
+            <span class="text-muted">of {{ plan_limits['max_users'] }}</span>
+            {% endif %}
+          </li>
           <li><strong>{{ workspaces|length }}</strong> workspace{{ '' if workspaces|length == 1 else 's' }}</li>
-          <li><strong>{{ producers|length }}</strong> producer{{ '' if producers|length == 1 else 's' }}</li>
-          <li><strong>{{ carriers|length }}</strong> carrier{{ '' if carriers|length == 1 else 's' }}</li>
+          <li>
+            <strong>{{ producer_usage }}</strong> producer{{ '' if producer_usage == 1 else 's' }}
+            {% if plan_limits and not plan_limits['includes_producer_portal'] %}
+            <span class="badge bg-warning-soft text-warning ms-1">Upgrade for portals</span>
+            {% endif %}
+          </li>
+          <li>
+            <strong>{{ carrier_usage }}</strong> carrier{{ '' if carrier_usage == 1 else 's' }}
+            {% if plan_limits and plan_limits['max_carriers'] %}
+            <span class="text-muted">of {{ plan_limits['max_carriers'] }}</span>
+            {% endif %}
+          </li>
         </ul>
       </div>
     </div>
@@ -75,7 +95,11 @@
     <div class="card shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h2 class="h6 mb-0">{{ 'Producers' if current_user.role == 'agent' else 'Team' }}</h2>
+        {% if plan_permissions.can_invite_producers %}
         <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#inviteUserModal">{{ 'Add producer' if current_user.role == 'agent' else 'Invite' }}</button>
+        {% else %}
+        <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upgrade to invite producers</button>
+        {% endif %}
       </div>
       <div class="list-group list-group-flush">
         {% for user in users %}
@@ -202,7 +226,11 @@
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h2 class="h6 mb-0">API keys</h2>
         {% if current_user.role in ['owner', 'admin'] %}
+        {% if plan_permissions.can_create_api_keys %}
         <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#createApiKeyModal">Generate</button>
+        {% else %}
+        <span class="badge bg-warning-soft text-warning">Upgrade for API access</span>
+        {% endif %}
         {% endif %}
       </div>
       {% if revealed_api_key %}
@@ -247,7 +275,7 @@
         {% elif current_user.role in ['owner', 'admin'] %}
         <div class="list-group-item text-center text-muted">Generate keys to connect Zapier, QuickBooks syncs, or partner APIs.</div>
         {% else %}
-        <div class="list-group-item text-center text-muted">Available for organization owners via the Stripe Scale plan.</div>
+        <div class="list-group-item text-center text-muted">Available for organization owners via the Scale plan.</div>
         {% endif %}
       </div>
     </div>
@@ -275,7 +303,7 @@
               <option value="admin">Admin</option>
               <option value="agent">Agent</option>
               <option value="bookkeeper">Bookkeeper</option>
-              <option value="producer">Producer</option>
+              <option value="producer" {% if not plan_permissions.can_invite_producers %}disabled{% endif %}>Producer {% if not plan_permissions.can_invite_producers %}(Upgrade required){% endif %}</option>
               <option value="auditor">Read-only auditor</option>
             </select>
           </div>
@@ -303,6 +331,9 @@
             <input type="text" name="display_name" class="form-control" placeholder="Jane Producer">
           </div>
           <div class="mb-0 alert alert-info small">Temporary password will default to <code>ChangeMe123!</code>. Update after first login.</div>
+          {% if not plan_permissions.can_invite_producers %}
+          <div class="alert alert-warning small mt-3 mb-0">Producer access is locked on your current plan. Upgrade to unlock producer portals.</div>
+          {% endif %}
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>

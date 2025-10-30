@@ -41,6 +41,7 @@ from .models import (
 from .workspaces import get_accessible_workspaces, get_accessible_workspace_ids
 from .nylas_email import send_workspace_invitation
 from .guides import get_role_guides
+from .marketing import build_plan_details
 
 
 admin_bp = Blueprint("admin", __name__)
@@ -64,6 +65,13 @@ def ensure_logged_in():
 def index():
     org = Organization.query.get_or_404(current_user.org_id)
     workspace_ids = get_accessible_workspace_ids(current_user)
+    seat_usage = (
+        User.query.filter_by(org_id=current_user.org_id)
+        .filter(User.status == "active")
+        .count()
+    )
+    carrier_usage = Carrier.query.filter_by(org_id=current_user.org_id).count()
+    producer_usage = Producer.query.filter_by(org_id=current_user.org_id).count()
     if current_user.role in {"owner", "admin"}:
         offices = (
             Office.query.filter_by(org_id=current_user.org_id)
@@ -86,6 +94,7 @@ def index():
             .order_by(APIKey.created_at.desc())
             .all()
         )
+        plan_cards = build_plan_details(plans) if plans else []
     else:
         workspaces = get_accessible_workspaces(current_user)
         unique_offices = {ws.office for ws in workspaces if ws and ws.office}
@@ -104,6 +113,7 @@ def index():
             users.extend([user for user in producer_users if user.id != current_user.id])
         plans = []
         api_keys = []
+        plan_cards = build_plan_details([org.plan]) if org.plan else []
 
     carriers = (
         Carrier.query.filter_by(org_id=current_user.org_id)
@@ -130,6 +140,20 @@ def index():
                 "token": api_key_tokens[new_key_id],
             }
 
+    plan_details_map = {detail["id"]: detail for detail in plan_cards}
+    if org.plan_id and org.plan_id not in plan_details_map and org.plan:
+        supplemental = build_plan_details([org.plan])
+        plan_details_map.update({detail["id"]: detail for detail in supplemental})
+    current_plan_detail = plan_details_map.get(org.plan_id)
+    plan_limits = current_plan_detail.get("limits") if current_plan_detail else None
+    plan_permissions = {
+        "can_invite_producers": True,
+        "can_create_api_keys": False,
+    }
+    if org.plan:
+        plan_permissions["can_invite_producers"] = org.plan.includes_producer_portal
+        plan_permissions["can_create_api_keys"] = org.plan.includes_api
+
     return render_template(
         "admin/index.html",
         org=org,
@@ -144,11 +168,20 @@ def index():
         accessible_workspace_ids=workspace_ids,
         revealed_api_key=revealed_api_key,
         downloadable_api_keys=set(api_key_tokens.keys()),
+        plan_limits=plan_limits,
+        current_plan_detail=current_plan_detail,
+        plan_permissions=plan_permissions,
+        seat_usage=seat_usage,
+        carrier_usage=carrier_usage,
+        producer_usage=producer_usage,
     )
 
 
 @admin_bp.route("/users", methods=["POST"])
 def create_user():
+    org = Organization.query.get_or_404(current_user.org_id)
+    plan = org.plan
+
     email = request.form.get("email")
     role = request.form.get("role", "producer")
     workspace_id_raw = request.form.get("workspace_id")
@@ -167,6 +200,25 @@ def create_user():
     if role == "agent" and current_user.role not in {"owner", "admin"}:
         flash("Only organization owners or admins can create agents.", "danger")
         return redirect(url_for("admin.index"))
+
+    if plan:
+        active_users = (
+            User.query.filter_by(org_id=org.id)
+            .filter(User.status == "active")
+            .count()
+        )
+        if plan.max_users and active_users >= plan.max_users:
+            flash(
+                f"{plan.name} includes up to {plan.max_users} active users. Upgrade your plan to invite more teammates.",
+                "warning",
+            )
+            return redirect(url_for("admin.index"))
+        if role == "producer" and not plan.includes_producer_portal:
+            flash(
+                "Producer portals are not included in your current plan. Upgrade to invite producers.",
+                "warning",
+            )
+            return redirect(url_for("admin.index"))
 
     target_workspace = None
     invited_workspace = None
@@ -190,7 +242,7 @@ def create_user():
                 flash("You cannot add users to that workspace.", "danger")
                 return redirect(url_for("admin.index"))
 
-    user = User(email=email, role=role, org_id=current_user.org_id)
+    user = User(email=email, role=role, org_id=org.id)
     user.set_password(password)
     db.session.add(user)
     db.session.flush()
@@ -201,7 +253,7 @@ def create_user():
             flash("Workspace assignment is required for producers.", "danger")
             return redirect(url_for("admin.index"))
         producer = Producer(
-            org_id=current_user.org_id,
+            org_id=org.id,
             user_id=user.id,
             workspace_id=target_workspace.id,
             agent_id=target_workspace.agent_id
@@ -342,12 +394,23 @@ def assign_workspace_agent(workspace_id):
 
 @admin_bp.route("/carriers", methods=["POST"])
 def create_carrier():
+    org = Organization.query.get_or_404(current_user.org_id)
+    plan = org.plan
+
     name = request.form.get("name")
     download_type = request.form.get("download_type", "csv")
     if not name:
         flash("Carrier name is required.", "danger")
     else:
-        carrier = Carrier(name=name, download_type=download_type, org_id=current_user.org_id)
+        if plan and plan.max_carriers:
+            existing_carriers = Carrier.query.filter_by(org_id=org.id).count()
+            if existing_carriers >= plan.max_carriers:
+                flash(
+                    f"{plan.name} includes up to {plan.max_carriers} carriers. Upgrade your plan to add more connections.",
+                    "warning",
+                )
+                return redirect(url_for("admin.index"))
+        carrier = Carrier(name=name, download_type=download_type, org_id=org.id)
         db.session.add(carrier)
         db.session.commit()
         flash("Carrier added.", "success")
@@ -412,6 +475,11 @@ def delete_rule(rule_id):
 def create_api_key():
     if current_user.role not in {"owner", "admin"}:
         flash("Only owners and admins can create API keys.", "danger")
+        return redirect(url_for("admin.index"))
+
+    org = Organization.query.get_or_404(current_user.org_id)
+    if not org.plan or not org.plan.includes_api:
+        flash("API access is available on the Scale plan. Upgrade to generate API keys.", "warning")
         return redirect(url_for("admin.index"))
 
     label = request.form.get("label")

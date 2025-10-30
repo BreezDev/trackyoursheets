@@ -4,7 +4,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+from decimal import Decimal, InvalidOperation
 from typing import Dict, Optional
+
+from flask import current_app
 
 import stripe
 from flask import Flask
@@ -30,6 +33,7 @@ class StripeGateway:
         self.price_ids = {k.lower(): v for k, v in (price_ids or {}).items() if v}
         if self.secret_key:
             stripe.api_key = self.secret_key
+        self._price_cache: Dict[str, Dict[str, object]] = {}
 
     @property
     def is_configured(self) -> bool:
@@ -38,6 +42,61 @@ class StripeGateway:
     def _resolve_price(self, plan: SubscriptionPlan | str) -> Optional[str]:
         key = plan.name if isinstance(plan, SubscriptionPlan) else str(plan)
         return self.price_ids.get(key.lower())
+
+    def plan_pricing(self, plan: SubscriptionPlan | str) -> Optional[Dict[str, object]]:
+        """Return Stripe pricing metadata for a plan, cached per price ID."""
+
+        price_id = self._resolve_price(plan)
+        if not price_id or not self.secret_key:
+            return None
+
+        cached = self._price_cache.get(price_id)
+        if cached:
+            return cached
+
+        try:
+            stripe.api_key = self.secret_key
+            price = stripe.Price.retrieve(price_id, expand=["product"])  # type: ignore[arg-type]
+        except Exception as exc:  # pragma: no cover - Stripe failures are logged only
+            logger = getattr(current_app, "logger", None)
+            if logger:
+                logger.warning("Unable to retrieve Stripe price", exc_info=exc, extra={"price_id": price_id})
+            return None
+
+        unit_amount = getattr(price, "unit_amount", None)
+        unit_amount_decimal = getattr(price, "unit_amount_decimal", None)
+        amount_decimal = None
+        if unit_amount is not None:
+            amount_decimal = Decimal(unit_amount) / Decimal(100)
+        elif unit_amount_decimal:
+            try:
+                amount_decimal = Decimal(unit_amount_decimal) / Decimal(100)
+            except (TypeError, InvalidOperation):  # pragma: no cover - depends on Stripe payload
+                amount_decimal = None
+
+        currency = (getattr(price, "currency", "") or "usd").upper()
+        interval = None
+        recurring = getattr(price, "recurring", None)
+        if recurring:
+            interval = getattr(recurring, "interval", None) or recurring.get("interval")
+
+        label = None
+        if amount_decimal is not None:
+            if currency == "USD":
+                label = f"${amount_decimal:,.2f}"
+            else:
+                label = f"{amount_decimal:,.2f} {currency}"
+
+        snapshot = {
+            "price_id": price_id,
+            "amount_decimal": amount_decimal,
+            "currency": currency,
+            "interval": interval or "month",
+            "label": label,
+        }
+
+        self._price_cache[price_id] = snapshot
+        return snapshot
 
     def ensure_customer(self, organization: Organization) -> str:
         if not organization:

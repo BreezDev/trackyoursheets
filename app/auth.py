@@ -22,7 +22,9 @@ def signup():
 
     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
     default_plan = plans[0] if plans else None
-    plan_details = build_plan_details(plans)
+    plan_cards = build_plan_details(plans)
+    plan_details_map = {detail["id"]: detail for detail in plan_cards}
+    default_plan_detail = plan_details_map.get(default_plan.id) if default_plan else None
 
     if request.method == "POST":
         org_name = request.form.get("org_name")
@@ -43,7 +45,9 @@ def signup():
                     "signup.html",
                     plans=plans,
                     default_plan=default_plan,
-                    plan_details=plan_details,
+                    default_plan_detail=default_plan_detail,
+                    plan_details=plan_cards,
+                    plan_details_map=plan_details_map,
                 )
 
             org = Organization(
@@ -71,7 +75,9 @@ def signup():
                     "signup.html",
                     plans=plans,
                     default_plan=default_plan,
-                    plan_details=plan_details,
+                    default_plan_detail=default_plan_detail,
+                    plan_details=plan_cards,
+                    plan_details_map=plan_details_map,
                 )
 
             seat_quantity = 1
@@ -108,7 +114,9 @@ def signup():
                     "signup.html",
                     plans=plans,
                     default_plan=default_plan,
-                    plan_details=plan_details,
+                    default_plan_detail=default_plan_detail,
+                    plan_details=plan_cards,
+                    plan_details_map=plan_details_map,
                 )
 
             db.session.commit()
@@ -119,7 +127,9 @@ def signup():
         "signup.html",
         plans=plans,
         default_plan=default_plan,
-        plan_details=plan_details,
+        default_plan_detail=default_plan_detail,
+        plan_details=plan_cards,
+        plan_details_map=plan_details_map,
     )
 
 

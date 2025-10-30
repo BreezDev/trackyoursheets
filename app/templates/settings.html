@@ -49,9 +49,20 @@
       <div class="card-body">
         <h2 class="h6 mb-3">Workspace usage</h2>
         <ul class="list-unstyled small mb-0">
-          <li><strong>{{ usage_snapshot.users }}</strong> active user{{ '' if usage_snapshot.users == 1 else 's' }}</li>
+          <li>
+            <strong>{{ usage_snapshot.users }}</strong> active user{{ '' if usage_snapshot.users == 1 else 's' }}
+            {% if plan_limits and plan_limits['max_users'] %}
+            <span class="text-muted">of {{ plan_limits['max_users'] }} seats</span>
+            {% endif %}
+          </li>
           <li><strong>{{ usage_snapshot.workspaces }}</strong> workspace{{ '' if usage_snapshot.workspaces == 1 else 's' }}</li>
           <li><strong>{{ usage_snapshot.producers }}</strong> producer{{ '' if usage_snapshot.producers == 1 else 's' }}</li>
+          {% if plan_limits and plan_limits['max_carriers'] %}
+          <li>
+            <strong>{{ usage_snapshot.carriers }}</strong> carrier{{ '' if usage_snapshot.carriers == 1 else 's' }}
+            <span class="text-muted">of {{ plan_limits['max_carriers'] }}</span>
+          </li>
+          {% endif %}
         </ul>
       </div>
     </div>
@@ -88,6 +99,7 @@
           <input type="hidden" name="intent" value="plan">
           <div class="row g-3">
             {% for plan in plans %}
+            {% set detail = plan_details_map.get(plan.id) if plan_details_map else None %}
             <div class="col-md-6">
               <label class="plan-card form-check w-100 h-100">
                 <input
@@ -102,19 +114,28 @@
                   <div class="d-flex justify-content-between align-items-start">
                     <div>
                       <span class="plan-name">{{ plan.name }}</span>
-                      <div class="plan-price">${{ '%.2f'|format(plan.price_per_user) }} <span class="text-muted">per user / mo</span></div>
+                      <div class="plan-price">
+                        {% if detail and detail.price_label %}
+                        {{ detail.price_label }} <span class="text-muted">per user / {{ detail.billing_interval }}</span>
+                        {% else %}
+                        ${{ '%.2f'|format(plan.price_per_user) }} <span class="text-muted">per user / month</span>
+                        {% endif %}
+                      </div>
                     </div>
                     {% if organization.plan_id == plan.id %}
                     <span class="badge bg-success-soft text-success">Active</span>
                     {% endif %}
                   </div>
                   <ul class="small text-muted mt-3 mb-0 ps-3">
-                    <li>Up to {{ plan.max_users }} users</li>
-                    <li>{{ plan.max_carriers }} carriers</li>
-                    <li>{{ plan.max_rows_per_month|int }} row limit per month</li>
-                    {% if plan.includes_api %}<li>API access included</li>{% endif %}
-                    {% if plan.includes_producer_portal %}<li>Producer portal</li>{% endif %}
-                    {% if plan.includes_quickbooks %}<li>QuickBooks export</li>{% endif %}
+                    {% if detail %}
+                      {% for item in detail.feature_points %}
+                      <li>{{ item }}</li>
+                      {% endfor %}
+                    {% else %}
+                      <li>Up to {{ plan.max_users }} users</li>
+                      <li>{{ plan.max_carriers }} carriers</li>
+                      <li>{{ plan.max_rows_per_month|int }} row limit per month</li>
+                    {% endif %}
                   </ul>
                 </div>
               </label>

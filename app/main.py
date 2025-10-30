@@ -30,6 +30,7 @@ from .models import (
     Coupon,
     User,
     Producer,
+    Carrier,
 )
 from .guides import get_role_guides, get_interactive_tour
 from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces, user_can_access_workspace
@@ -238,6 +239,10 @@ def settings():
         .first()
     )
     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
+    plan_cards = build_plan_details(plans)
+    plan_details_map = {detail["id"]: detail for detail in plan_cards}
+    current_plan_detail = plan_details_map.get(org.plan_id)
+    plan_limits = current_plan_detail.get("limits") if current_plan_detail else None
     can_manage_plan = current_user.role in {"owner", "admin", "agent"}
     stripe_gateway = current_app.extensions.get("stripe_gateway")
     stripe_enabled = bool(stripe_gateway and getattr(stripe_gateway, "is_configured", False) and stripe_gateway.is_configured)
@@ -454,9 +459,10 @@ def settings():
             return redirect(url_for("main.settings"))
 
     usage_snapshot = {
-        "users": User.query.filter_by(org_id=org.id).count(),
+        "users": User.query.filter_by(org_id=org.id).filter(User.status == "active").count(),
         "workspaces": Workspace.query.filter_by(org_id=org.id).count(),
         "producers": Producer.query.filter_by(org_id=org.id).count(),
+        "carriers": Carrier.query.filter_by(org_id=org.id).count(),
     }
 
     stripe_publishable_key = None
@@ -474,6 +480,9 @@ def settings():
         subscription=subscription,
         can_manage_plan=can_manage_plan,
         usage_snapshot=usage_snapshot,
+        plan_details_map=plan_details_map,
+        current_plan_detail=current_plan_detail,
+        plan_limits=plan_limits,
         stripe_enabled=stripe_enabled,
         stripe_mode=stripe_mode,
         stripe_publishable_key=stripe_publishable_key,
