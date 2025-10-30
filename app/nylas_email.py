@@ -198,12 +198,17 @@ def send_import_notification(
         rows = item.get("rows", 0)
         lines.append(f" • {carrier}: {rows} row(s)")
 
+    uploader_name = (
+        getattr(uploader, "display_name_for_ui", None)
+        or getattr(uploader, "email", None)
+        or ""
+    )
+
     _send_email(
         recipients=[recipient],
         subject=subject,
         body="\n".join(lines),
-        sender_email=getattr(uploader, "email", None),
-        sender_name=getattr(uploader, "email", None),
+        sender_name=f"{uploader_name} via TrackYourSheets" if uploader_name else None,
         reply_to=[getattr(uploader, "email", "")] if getattr(uploader, "email", None) else None,
         metadata={
             "workspace_id": getattr(workspace, "id", None),
@@ -218,7 +223,12 @@ def send_workspace_invitation(
     workspace,
     role: str,
 ) -> None:
-    inviter_name = getattr(inviter, "email", None) or "A teammate"
+    inviter_display = (
+        getattr(inviter, "display_name_for_ui", None)
+        or getattr(inviter, "email", None)
+        or ""
+    )
+    inviter_name = inviter_display or "A teammate"
     body = (
         "\n".join(
             [
@@ -239,8 +249,11 @@ def send_workspace_invitation(
         recipients=[recipient],
         subject=f"You're invited to {workspace.name} on TrackYourSheets",
         body=body,
-        sender_email=getattr(inviter, "email", None),
-        sender_name=inviter_name,
+        sender_name=(
+            f"{inviter_display} via TrackYourSheets"
+            if inviter_display
+            else "TrackYourSheets"
+        ),
         reply_to=[getattr(inviter, "email", "")] if getattr(inviter, "email", None) else None,
         metadata={
             "workspace_id": getattr(workspace, "id", None),
