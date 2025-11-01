@@ -2,12 +2,26 @@ from dotenv import load_dotenv
 load_dotenv()
 from datetime import datetime
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for, current_app
+from flask import (
+    Blueprint,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+    current_app,
+    session,
+)
 from flask_login import current_user, login_required, login_user, logout_user
 
 from . import db
 from .models import Organization, SubscriptionPlan, Subscription, User
-from .nylas_email import send_signup_alert, send_signup_welcome
+from .resend_email import (
+    send_login_notification,
+    send_signup_alert,
+    send_signup_welcome,
+    send_two_factor_code_email,
+)
 from sqlalchemy import func
 from .marketing import build_plan_details
 
@@ -229,7 +243,24 @@ def signup_complete():
     send_signup_welcome(user, org)
     send_signup_alert(user, org)
 
+    if user.two_factor_enabled:
+        code = user.generate_two_factor_code()
+        db.session.commit()
+        send_two_factor_code_email(user.email, code, intent="signup")
+        session["two_factor_user_id"] = user.id
+        session["two_factor_intent"] = "signup"
+        session["two_factor_after_signup"] = True
+        flash(
+            "Enter the verification code we emailed you to finish setting up your account.",
+            "info",
+        )
+        return redirect(url_for("auth.two_factor"))
+
     login_user(user)
+    user.last_login = datetime.utcnow()
+    db.session.commit()
+    if user.wants_notification("login"):
+        send_login_notification(user.email, ip_address=request.remote_addr)
     flash("Welcome to TrackYourSheets! Your subscription is active.", "success")
     return redirect(url_for("main.onboarding"))
 
@@ -244,15 +275,102 @@ def login():
         password = request.form.get("password")
         user = User.query.filter_by(email=email).first()
         if user and user.check_password(password):
+            if user.two_factor_enabled:
+                code = user.generate_two_factor_code()
+                db.session.commit()
+                send_two_factor_code_email(user.email, code, intent="login")
+                session["two_factor_user_id"] = user.id
+                session["two_factor_intent"] = "login"
+                session["two_factor_next"] = request.args.get("next")
+                flash(
+                    "Enter the verification code we emailed you to finish signing in.",
+                    "info",
+                )
+                return redirect(url_for("auth.two_factor"))
+
             login_user(user)
             user.last_login = datetime.utcnow()
             db.session.commit()
+            if user.wants_notification("login"):
+                send_login_notification(user.email, ip_address=request.remote_addr)
             flash("Logged in successfully.", "success")
             next_page = request.args.get("next")
             return redirect(next_page or url_for("main.dashboard"))
         flash("Invalid credentials.", "danger")
 
     return render_template("login.html")
+
+
+@auth_bp.route("/two-factor", methods=["GET", "POST"])
+def two_factor():
+    user_id = session.get("two_factor_user_id")
+    if not user_id:
+        flash("Your verification session expired. Please sign in again.", "warning")
+        return redirect(url_for("auth.login"))
+
+    user = User.query.get(user_id)
+    if not user:
+        session.pop("two_factor_user_id", None)
+        flash("We couldn't find that account. Please sign in again.", "danger")
+        return redirect(url_for("auth.login"))
+
+    intent = session.get("two_factor_intent", "login")
+
+    if request.method == "POST":
+        code = request.form.get("code")
+        if user.verify_two_factor_code(code):
+            user.clear_two_factor_challenge()
+            user.last_login = datetime.utcnow()
+            db.session.commit()
+            login_user(user)
+            next_page = session.pop("two_factor_next", None)
+            is_signup = session.pop("two_factor_after_signup", False)
+            session.pop("two_factor_user_id", None)
+            session.pop("two_factor_intent", None)
+            if user.wants_notification("login"):
+                send_login_notification(user.email, ip_address=request.remote_addr)
+            if is_signup:
+                flash("Account verified! Welcome to TrackYourSheets.", "success")
+                return redirect(url_for("main.onboarding"))
+            flash("Logged in successfully.", "success")
+            return redirect(next_page or url_for("main.dashboard"))
+
+        flash("That security code was invalid or expired. Try again.", "danger")
+
+    return render_template(
+        "two_factor.html",
+        email=user.email,
+        intent=intent,
+    )
+
+
+@auth_bp.route("/two-factor/resend", methods=["POST"])
+def resend_two_factor():
+    user_id = session.get("two_factor_user_id")
+    if not user_id:
+        flash("Your verification session expired. Please sign in again.", "warning")
+        return redirect(url_for("auth.login"))
+
+    user = User.query.get(user_id)
+    if not user:
+        session.pop("two_factor_user_id", None)
+        flash("We couldn't find that account. Please sign in again.", "danger")
+        return redirect(url_for("auth.login"))
+
+    if not user.two_factor_enabled:
+        session.pop("two_factor_user_id", None)
+        session.pop("two_factor_intent", None)
+        session.pop("two_factor_next", None)
+        session.pop("two_factor_after_signup", None)
+        flash("Two-factor authentication is not enabled for this account.", "info")
+        return redirect(url_for("auth.login"))
+
+    code = user.generate_two_factor_code()
+    db.session.commit()
+    intent = session.get("two_factor_intent", "login")
+    send_two_factor_code_email(user.email, code, intent=intent)
+    flash("We've sent a fresh verification code to your email.", "info")
+    return redirect(url_for("auth.two_factor"))
 
 
 @auth_bp.route("/logout")

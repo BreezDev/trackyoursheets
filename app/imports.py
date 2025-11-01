@@ -30,7 +30,7 @@ from .models import (
     CategoryTag,
     Workspace,
 )
-from .nylas_email import send_import_notification
+from .resend_email import send_import_notification
 from .workspaces import (
     find_workspace_for_upload,
     get_accessible_workspaces,
@@ -42,6 +42,44 @@ from .workspaces import (
 
 imports_bp = Blueprint("imports", __name__)
 
+
+def _dedupe_emails(emails):
+    seen = set()
+    unique = []
+    for email in emails:
+        if not email:
+            continue
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(email)
+    return unique
+
+
+def _import_notification_recipients(workspace, uploader):
+    if not workspace:
+        return []
+
+    uploader_id = getattr(uploader, "id", None)
+    emails = []
+    agent = getattr(workspace, "agent", None)
+    if agent and agent.id != uploader_id and getattr(agent, "email", None):
+        if agent.wants_notification("new_entries"):
+            emails.append(agent.email)
+
+    organization = getattr(workspace, "organization", None)
+    if organization and getattr(organization, "users", None):
+        for member in organization.users:
+            if member.id == uploader_id:
+                continue
+            if not getattr(member, "email", None):
+                continue
+            if not member.wants_notification("new_entries"):
+                continue
+            emails.append(member.email)
+
+    return _dedupe_emails(emails)
 
 
 def _get_category_choices(org_id: int):
@@ -379,9 +417,10 @@ def upload():
 
     db.session.commit()
 
-    if workspace.agent and workspace.agent.email:
+    recipients = _import_notification_recipients(workspace, current_user)
+    if recipients:
         send_import_notification(
-            recipient=workspace.agent.email,
+            recipients=recipients,
             workspace=workspace,
             uploader=current_user,
             period=derived_period,

@@ -28,20 +28,18 @@ def create_app(test_config=None):
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
     )
 
-    app.config.setdefault("NYLAS_API_BASE_URL", os.environ.get("NYLAS_API_BASE_URL", "https://api.nylas.com"))
-    app.config.setdefault("NYLAS_API_KEY", os.environ.get("NYLAS_API_KEY"))
-    app.config.setdefault("NYLAS_GRANT_ID", os.environ.get("NYLAS_GRANT_ID"))
-    app.config.setdefault("NYLAS_FROM_EMAIL", os.environ.get("NYLAS_FROM_EMAIL"))
-    app.config.setdefault("NYLAS_FROM_NAME", os.environ.get("NYLAS_FROM_NAME", "TrackYourSheets"))
-    app.config.setdefault("NYLAS_REPLY_TO", os.environ.get("NYLAS_REPLY_TO"))
-    app.config.setdefault("NYLAS_ALERT_RECIPIENTS", os.environ.get("NYLAS_ALERT_RECIPIENTS"))
+    app.config.setdefault("RESEND_API_KEY", os.environ.get("RESEND_API_KEY"))
+    app.config.setdefault("RESEND_FROM_EMAIL", os.environ.get("RESEND_FROM_EMAIL"))
+    app.config.setdefault("RESEND_FROM_NAME", os.environ.get("RESEND_FROM_NAME", "TrackYourSheets"))
+    app.config.setdefault("RESEND_REPLY_TO", os.environ.get("RESEND_REPLY_TO"))
+    app.config.setdefault("RESEND_ALERT_RECIPIENTS", os.environ.get("RESEND_ALERT_RECIPIENTS"))
     app.config.setdefault(
-        "NYLAS_NOTIFICATION_EMAILS",
-        os.environ.get("NYLAS_NOTIFICATION_EMAILS"),
+        "RESEND_NOTIFICATION_EMAILS",
+        os.environ.get("RESEND_NOTIFICATION_EMAILS"),
     )
     app.config.setdefault(
-        "NYLAS_SIGNUP_ALERT_EMAILS",
-        os.environ.get("NYLAS_SIGNUP_ALERT_EMAILS"),
+        "RESEND_SIGNUP_ALERT_EMAILS",
+        os.environ.get("RESEND_SIGNUP_ALERT_EMAILS"),
     )
 
     if test_config:
