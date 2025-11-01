@@ -56,11 +56,11 @@ All plan entitlements live in the `subscription_plans` table (`app/models.py`). 
 
 Seat limits (team member amount) are enforced by the plan’s `max_users`. Price changes rely on the same `price_per_user` column; if you need tiered or flat billing, store the amount on the plan and use it during invoice generation. Trial windows are now managed exclusively through Stripe coupons or subscription settings—there is no manual override inside the UI.
 
-## Workspace email notifications via Nylas
+## Workspace email notifications via Resend
 
-`app/nylas_email.py` exposes helpers around the Nylas v3 send endpoint. Wire them into admin workflows as follows:
+`app/resend_email.py` exposes helpers around the Resend email endpoint. Wire them into admin workflows as follows:
 
-1. Ensure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, `NYLAS_FROM_EMAIL`, and (optionally) `NYLAS_FROM_NAME`, `NYLAS_NOTIFICATION_EMAILS`, `NYLAS_SIGNUP_ALERT_EMAILS` environment variables are set.
+1. Ensure `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and (optionally) `RESEND_FROM_NAME`, `RESEND_NOTIFICATION_EMAILS`, `RESEND_SIGNUP_ALERT_EMAILS` environment variables are set.
 2. For import summaries, call `send_import_notification(recipient, workspace, uploader, period, summary_rows)`.
 3. For workspace invitations, call `send_workspace_invitation(recipient, inviter, workspace, role)` immediately after committing the new user record.
 
@@ -94,7 +94,7 @@ Although managed on `/imports`, admins should periodically:
 
 ## Email notifications
 
-- Configure `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_FROM_EMAIL` (plus `NYLAS_NOTIFICATION_EMAILS` for CCs) to enable Nylas-powered notifications.
+- Configure `RESEND_API_KEY` and `RESEND_FROM_EMAIL` (plus `RESEND_NOTIFICATION_EMAILS` for CCs) to enable Resend-powered notifications.
 - When a producer uploads a CSV, the workspace agent receives an email summarising row counts per carrier.
 
 ## Security best practices

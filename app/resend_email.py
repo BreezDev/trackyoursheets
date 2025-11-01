@@ -1,12 +1,14 @@
-"""Nylas email helpers for TrackYourSheets."""
+"""Resend email helpers for TrackYourSheets."""
 from __future__ import annotations
+
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import os
 from typing import Iterable, Mapping, MutableMapping, Optional, Sequence, Union
 
-import requests
+import resend
 from flask import current_app
 
 EmailRecipient = Union[str, Mapping[str, str]]
@@ -49,30 +51,42 @@ def _normalize_recipients(recipients: Sequence[EmailRecipient]) -> list[MutableM
     return _deduplicate(normalised)
 
 
-def _nylas_config() -> dict:
+def _resend_config() -> dict:
     app = current_app._get_current_object()
     return {
-        "api_key": app.config.get("NYLAS_API_KEY") or os.environ.get("NYLAS_API_KEY"),
-        "grant_id": app.config.get("NYLAS_GRANT_ID") or os.environ.get("NYLAS_GRANT_ID"),
-        "base_url": app.config.get("NYLAS_API_BASE_URL")
-        or os.environ.get("NYLAS_API_BASE_URL", "https://api.nylas.com"),
-        "from_email": app.config.get("NYLAS_FROM_EMAIL") or os.environ.get("NYLAS_FROM_EMAIL"),
-        "from_name": app.config.get("NYLAS_FROM_NAME")
-        or os.environ.get("NYLAS_FROM_NAME", "TrackYourSheets"),
+        "api_key": app.config.get("RESEND_API_KEY") or os.environ.get("RESEND_API_KEY"),
+        "from_email": app.config.get("RESEND_FROM_EMAIL")
+        or os.environ.get("RESEND_FROM_EMAIL"),
+        "from_name": app.config.get("RESEND_FROM_NAME")
+        or os.environ.get("RESEND_FROM_NAME", "TrackYourSheets"),
         "reply_to": _split_emails(
-            app.config.get("NYLAS_REPLY_TO") or os.environ.get("NYLAS_REPLY_TO")
+            app.config.get("RESEND_REPLY_TO") or os.environ.get("RESEND_REPLY_TO")
         ),
         "default_notifications": _split_emails(
-            app.config.get("NYLAS_NOTIFICATION_EMAILS")
-            or os.environ.get("NYLAS_NOTIFICATION_EMAILS")
+            app.config.get("RESEND_NOTIFICATION_EMAILS")
+            or os.environ.get("RESEND_NOTIFICATION_EMAILS")
         ),
         "signup_alerts": _split_emails(
-            app.config.get("NYLAS_SIGNUP_ALERT_EMAILS")
-            or os.environ.get("NYLAS_SIGNUP_ALERT_EMAILS")
-            or app.config.get("NYLAS_ALERT_RECIPIENTS")
-            or os.environ.get("NYLAS_ALERT_RECIPIENTS")
+            app.config.get("RESEND_SIGNUP_ALERT_EMAILS")
+            or os.environ.get("RESEND_SIGNUP_ALERT_EMAILS")
+            or app.config.get("RESEND_ALERT_RECIPIENTS")
+            or os.environ.get("RESEND_ALERT_RECIPIENTS")
         ),
     }
+
+
+def _build_sender(email: str, name: Optional[str]) -> str:
+    if name:
+        name = name.strip()
+    if name:
+        return f"{name} <{email}>"
+    return email
+
+
+def _as_html(body: str) -> str:
+    lines = body.splitlines() or [body]
+    safe_lines = [line.replace("<", "&lt;").replace(">", "&gt;") for line in lines]
+    return "<p>" + "<br>".join(safe_lines) + "</p>"
 
 
 def _send_email(
@@ -90,16 +104,14 @@ def _send_email(
     if not recipients:
         return False
 
-    config = _nylas_config()
+    config = _resend_config()
     api_key = config.get("api_key")
-    grant_id = config.get("grant_id")
     from_email = sender_email or config.get("from_email")
-    if not api_key or not grant_id or not from_email:
+    if not api_key or not from_email:
         current_app.logger.info(
-            "Skipping Nylas send; configuration incomplete.",
+            "Skipping Resend send; configuration incomplete.",
             extra={
                 "has_api_key": bool(api_key),
-                "has_grant": bool(grant_id),
                 "has_from": bool(from_email),
             },
         )
@@ -109,20 +121,22 @@ def _send_email(
     if not to_payload:
         return False
 
-    from_payload: MutableMapping[str, str] = {"email": from_email}
-    sender_identity = sender_name or config.get("from_name") or "TrackYourSheets"
-    if sender_identity:
-        sender_identity = sender_identity.strip()
-        if sender_identity:
-            from_payload["name"] = sender_identity
+    resend.api_key = api_key
 
-    payload: dict[str, object] = {
-        "from": [from_payload],
-        "to": to_payload,
+    sender_identity = sender_name or config.get("from_name") or "TrackYourSheets"
+    sender = _build_sender(from_email, sender_identity)
+
+    params: dict[str, object] = {
+        "from": sender,
+        "to": [entry["email"] for entry in to_payload],
         "subject": subject,
-        "body": body,
-        "is_plaintext": not is_html,
     }
+
+    if is_html:
+        params["html"] = body
+    else:
+        params["text"] = body
+        params["html"] = _as_html(body)
 
     effective_reply_to: list[EmailRecipient] = []
     if reply_to:
@@ -130,27 +144,26 @@ def _send_email(
     elif config.get("reply_to"):
         effective_reply_to.extend(config["reply_to"])
     if effective_reply_to:
-        payload["reply_to"] = _normalize_recipients(effective_reply_to)
+        reply_to_payload = _normalize_recipients(effective_reply_to)
+        if reply_to_payload:
+            params["reply_to"] = [entry["email"] for entry in reply_to_payload]
+
+    if metadata:
+        tags: list[dict[str, str]] = []
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            tags.append({"name": str(key), "value": str(value)})
+        if tags:
+            params["tags"] = tags
 
     if send_at:
-        payload["send_at"] = int(send_at)
-    if metadata:
-        payload["metadata"] = dict(metadata)
-
-    base_url = (config.get("base_url") or "https://api.nylas.com").rstrip("/")
-    url = f"{base_url}/v3/grants/{grant_id}/messages/send"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        params["scheduled_at"] = send_at
 
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code >= 400:
-            current_app.logger.warning(
-                "Nylas send failed",
-                extra={"status": response.status_code, "body": response.text},
-            )
-            return False
+        resend.Emails.send(params)  # type: ignore[arg-type]
     except Exception as exc:  # pragma: no cover - network failures logged only
-        current_app.logger.warning("Nylas send error", exc_info=exc)
+        current_app.logger.warning("Resend send error", exc_info=exc)
         return False
     return True
 
@@ -163,7 +176,7 @@ def send_notification_email(
     include_default_recipients: bool = True,
     metadata: Optional[Mapping[str, object]] = None,
 ) -> bool:
-    config = _nylas_config()
+    config = _resend_config()
     target_list: list[EmailRecipient] = list(recipients or [])
     if include_default_recipients:
         target_list.extend(config.get("default_notifications", []))
@@ -178,13 +191,16 @@ def send_notification_email(
 
 
 def send_import_notification(
-    recipient: str,
+    recipients: Sequence[EmailRecipient],
     workspace,
     uploader,
     period: str,
     summary: Iterable[Mapping[str, object]],
 ) -> None:
     """Send a summary email when a statement import is uploaded."""
+
+    if not recipients:
+        return
 
     subject = f"New commission import for {workspace.name}"
     office_name = workspace.office.name if getattr(workspace, "office", None) else ""
@@ -208,12 +224,16 @@ def send_import_notification(
         or ""
     )
 
+    reply_to: Optional[list[EmailRecipient]] = None
+    if getattr(uploader, "email", None):
+        reply_to = [getattr(uploader, "email", "")]
+
     _send_email(
-        recipients=[recipient],
+        recipients=recipients,
         subject=subject,
         body="\n".join(lines),
         sender_name=f"{uploader_name} via TrackYourSheets" if uploader_name else None,
-        reply_to=[getattr(uploader, "email", "")] if getattr(uploader, "email", None) else None,
+        reply_to=reply_to,
         metadata={
             "workspace_id": getattr(workspace, "id", None),
             "period": period,
@@ -249,6 +269,10 @@ def send_workspace_invitation(
         )
     )
 
+    reply_to: Optional[list[EmailRecipient]] = None
+    if getattr(inviter, "email", None):
+        reply_to = [getattr(inviter, "email", "")]
+
     _send_email(
         recipients=[recipient],
         subject=f"You're invited to {workspace.name} on TrackYourSheets",
@@ -258,7 +282,7 @@ def send_workspace_invitation(
             if inviter_display
             else "TrackYourSheets"
         ),
-        reply_to=[getattr(inviter, "email", "")] if getattr(inviter, "email", None) else None,
+        reply_to=reply_to,
         metadata={
             "workspace_id": getattr(workspace, "id", None),
             "role": role,
@@ -297,7 +321,7 @@ def send_signup_welcome(user, organization) -> None:
 
 
 def send_signup_alert(user, organization) -> None:
-    config = _nylas_config()
+    config = _resend_config()
     recipients = config.get("signup_alerts", [])
     if not recipients:
         return
@@ -315,4 +339,115 @@ def send_signup_alert(user, organization) -> None:
         subject=f"New TrackYourSheets signup: {org_name}",
         body="\n".join(lines),
         metadata={"org_id": getattr(organization, "id", None)},
+    )
+
+
+def send_two_factor_code_email(email: str, code: str, *, intent: str) -> None:
+    if not email:
+        return
+    subject = f"TrackYourSheets security code ({intent.title()})"
+    body = "\n".join(
+        [
+            "We received a request to verify your identity.",
+            "",
+            f"Security code: {code}",
+            "",
+            "The code expires in 10 minutes. If you didn't request this, reset your password immediately.",
+        ]
+    )
+    _send_email(
+        recipients=[email],
+        subject=subject,
+        body=body,
+        metadata={"purpose": f"2fa-{intent}"},
+    )
+
+
+def send_login_notification(email: str, *, ip_address: Optional[str] = None) -> None:
+    if not email:
+        return
+    lines = [
+        "You successfully signed in to TrackYourSheets.",
+    ]
+    if ip_address:
+        lines.append(f"Sign-in from: {ip_address}")
+    lines.extend(
+        [
+            "",
+            "If this wasn't you, reset your password and contact support.",
+        ]
+    )
+    _send_email(
+        recipients=[email],
+        subject="TrackYourSheets login confirmation",
+        body="\n".join(lines),
+        metadata={"purpose": "login-alert"},
+    )
+
+
+def send_workspace_update_notification(
+    recipients: Sequence[EmailRecipient],
+    *,
+    workspace,
+    actor,
+    summary: str,
+) -> None:
+    if not recipients:
+        return
+    actor_name = (
+        getattr(actor, "display_name_for_ui", None)
+        or getattr(actor, "email", None)
+        or "A teammate"
+    )
+    body = "\n".join(
+        [
+            f"{actor_name} updated the {workspace.name} workspace.",
+            "",
+            summary,
+            "",
+            "Visit your dashboard to review the latest changes.",
+        ]
+    )
+    _send_email(
+        recipients=recipients,
+        subject=f"Workspace activity: {workspace.name}",
+        body=body,
+        metadata={
+            "workspace_id": getattr(workspace, "id", None),
+            "purpose": "workspace-update",
+        },
+    )
+
+
+def send_workspace_chat_notification(
+    recipients: Sequence[EmailRecipient],
+    *,
+    workspace,
+    actor,
+    message: str,
+) -> None:
+    if not recipients:
+        return
+    actor_name = (
+        getattr(actor, "display_name_for_ui", None)
+        or getattr(actor, "email", None)
+        or "A teammate"
+    )
+    body = "\n".join(
+        [
+            f"{actor_name} posted a new message in {workspace.name}.",
+            "",
+            message,
+            "",
+            "Reply from TrackYourSheets to keep momentum going.",
+        ]
+    )
+    _send_email(
+        recipients=recipients,
+        subject=f"New workspace message: {workspace.name}",
+        body=body,
+        metadata={
+            "workspace_id": getattr(workspace, "id", None),
+            "purpose": "workspace-chat",
+        },
     )

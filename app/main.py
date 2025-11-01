@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 from datetime import datetime, timedelta
+from typing import Sequence
 
 from flask import (
     Blueprint,
@@ -31,11 +32,16 @@ from .models import (
     User,
     Producer,
     Carrier,
+    DEFAULT_NOTIFICATION_PREFERENCES,
 )
 from .guides import get_role_guides, get_interactive_tour
 from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces, user_can_access_workspace
 from . import db
-from .nylas_email import send_notification_email
+from .resend_email import (
+    send_notification_email,
+    send_workspace_chat_notification,
+    send_workspace_update_notification,
+)
 from .marketing import (
     build_plan_details,
     marketing_highlights,
@@ -73,14 +79,48 @@ def _note_meta(note):
     }
 
 
+def _dedupe_emails(emails: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for email in emails:
+        if not email:
+            continue
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(email)
+    return unique
+
+
 def _billing_contacts(organization) -> list[str]:
     if not organization or not getattr(organization, "users", None):
         return []
-    emails = []
+    emails: list[str] = []
     for user in organization.users:
         if user.role in {"owner", "admin"} and getattr(user, "email", None):
-            emails.append(user.email)
-    return emails
+            if user.wants_notification("plan_updates"):
+                emails.append(user.email)
+    return _dedupe_emails(emails)
+
+
+def _workspace_recipients(workspace, *, preference: str, exclude_user_id: int | None = None) -> list[str]:
+    if not workspace or not getattr(workspace, "organization", None):
+        return []
+    recipients: list[str] = []
+    for member in workspace.organization.users:
+        if member.id == exclude_user_id:
+            continue
+        if not getattr(member, "email", None):
+            continue
+        if not member.wants_notification(preference):
+            continue
+        recipients.append(member.email)
+    agent = getattr(workspace, "agent", None)
+    if agent and agent.id != exclude_user_id and getattr(agent, "email", None):
+        if agent.wants_notification(preference):
+            recipients.append(agent.email)
+    return _dedupe_emails(recipients)
 
 
 def _serialize_chat_message(message: WorkspaceChatMessage) -> dict:
@@ -536,22 +576,39 @@ def settings():
                 f"Coupon {code.upper()} applied successfully.",
                 "success",
             )
-            recipients = _billing_contacts(org) or [current_user.email]
-            message_lines = [
-                f"Organisation: {org.name}",
-                f"Updated by: {current_user.email}",
-                f"Coupon code: {code.upper()}",
-            ]
-            if coupon.trial_extension_days:
-                message_lines.append(f"Trial extended by {coupon.trial_extension_days} day(s)")
-            if applied_plan:
-                message_lines.append(f"Applied plan: {applied_plan.name}")
-            send_notification_email(
-                recipients=recipients,
-                subject=f"Coupon {code.upper()} applied",
-                body="\n".join(message_lines),
-                metadata={"org_id": org.id, "coupon": code.upper()},
-            )
+            recipients = _billing_contacts(org)
+            if current_user.email and current_user.wants_notification("plan_updates"):
+                recipients.append(current_user.email)
+            recipients = _dedupe_emails(recipients)
+            if recipients:
+                message_lines = [
+                    f"Organisation: {org.name}",
+                    f"Updated by: {current_user.email}",
+                    f"Coupon code: {code.upper()}",
+                ]
+                if coupon.trial_extension_days:
+                    message_lines.append(
+                        f"Trial extended by {coupon.trial_extension_days} day(s)"
+                    )
+                if applied_plan:
+                    message_lines.append(f"Applied plan: {applied_plan.name}")
+                send_notification_email(
+                    recipients=recipients,
+                    subject=f"Coupon {code.upper()} applied",
+                    body="\n".join(message_lines),
+                    metadata={"org_id": org.id, "coupon": code.upper()},
+                )
+            return redirect(url_for("main.settings"))
+
+        if intent == "notifications":
+            selected = request.form.getlist("notifications")
+            two_factor_enabled = bool(request.form.get("two_factor_enabled"))
+            current_user.set_notification_preferences(selected)
+            current_user.two_factor_enabled = two_factor_enabled
+            if not two_factor_enabled:
+                current_user.clear_two_factor_challenge()
+            db.session.commit()
+            flash("Notification preferences updated.", "success")
             return redirect(url_for("main.settings"))
 
     usage_snapshot = {
@@ -588,6 +645,10 @@ def settings():
         stripe_enabled=stripe_enabled,
         stripe_mode=stripe_mode,
         stripe_publishable_key=stripe_publishable_key,
+        notification_options=DEFAULT_NOTIFICATION_PREFERENCES,
+        user_notifications=current_user.notification_preferences
+        or DEFAULT_NOTIFICATION_PREFERENCES,
+        two_factor_enabled=current_user.two_factor_enabled,
     )
 
 
@@ -701,21 +762,26 @@ def checkout_complete():
         first_item = line_items.data[0]
         quantity = getattr(first_item, "quantity", None)
 
-    recipients = _billing_contacts(org) or [current_user.email]
-    message_lines = [
-        f"Organisation: {org.name}",
-        f"Updated by: {current_user.email}",
-        f"Plan: {plan_name or subscription_record.plan or 'Unknown'}",
-    ]
-    if quantity:
-        message_lines.append(f"Seats confirmed: {quantity}")
+    recipients = _billing_contacts(org)
+    if current_user.email and current_user.wants_notification("plan_updates"):
+        recipients.append(current_user.email)
+    recipients = _dedupe_emails(recipients)
 
-    send_notification_email(
-        recipients=recipients,
-        subject=f"Stripe checkout completed for {org.name}",
-        body="\n".join(message_lines),
-        metadata={"org_id": org.id, "session_id": session_id},
-    )
+    if recipients:
+        message_lines = [
+            f"Organisation: {org.name}",
+            f"Updated by: {current_user.email}",
+            f"Plan: {plan_name or subscription_record.plan or 'Unknown'}",
+        ]
+        if quantity:
+            message_lines.append(f"Seats confirmed: {quantity}")
+
+        send_notification_email(
+            recipients=recipients,
+            subject=f"Stripe checkout completed for {org.name}",
+            body="\n".join(message_lines),
+            metadata={"org_id": org.id, "session_id": session_id},
+        )
 
     flash("Subscription update confirmed. Thanks for completing checkout!", "success")
     return redirect(url_for("main.settings"))
@@ -784,6 +850,24 @@ def save_note(scope: str):
     db.session.commit()
     db.session.refresh(note)
 
+    if scope == "shared":
+        snippet = (content or "").strip()
+        if len(snippet) > 140:
+            snippet = snippet[:137].rstrip() + "..."
+        summary = snippet or "Shared workspace notes were updated."
+        recipients = _workspace_recipients(
+            workspace,
+            preference="workspace_updates",
+            exclude_user_id=current_user.id,
+        )
+        if recipients:
+            send_workspace_update_notification(
+                recipients,
+                workspace=workspace,
+                actor=current_user,
+                summary=summary,
+            )
+
     return jsonify(
         {
             "status": "saved",
@@ -800,6 +884,11 @@ def workspace_chat(workspace_id: int):
     if not user_can_access_workspace(current_user, workspace_id):
         abort(403)
 
+    workspace = Workspace.query.filter_by(
+        id=workspace_id,
+        org_id=current_user.org_id,
+    ).first_or_404()
+
     if request.method == "POST":
         data = request.get_json() or {}
         content = (data.get("content") or "").strip()
@@ -815,6 +904,22 @@ def workspace_chat(workspace_id: int):
         db.session.add(message)
         db.session.commit()
         db.session.refresh(message)
+
+        snippet = message.content.strip()
+        if len(snippet) > 140:
+            snippet = snippet[:137].rstrip() + "..."
+        recipients = _workspace_recipients(
+            workspace,
+            preference="new_entries",
+            exclude_user_id=current_user.id,
+        )
+        if recipients:
+            send_workspace_chat_notification(
+                recipients,
+                workspace=workspace,
+                actor=current_user,
+                message=snippet,
+            )
         return jsonify(_serialize_chat_message(message)), 201
 
     messages = (

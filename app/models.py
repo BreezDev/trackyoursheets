@@ -1,10 +1,22 @@
 from dotenv import load_dotenv
 load_dotenv()
-from datetime import datetime
+from datetime import datetime, timedelta
+from secrets import randbelow
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from . import db, login_manager
+
+
+DEFAULT_NOTIFICATION_PREFERENCES = {
+    "signup": True,
+    "login": True,
+    "workspace_invite": True,
+    "plan_updates": True,
+    "workspace_updates": True,
+    "new_entries": True,
+    "general_updates": True,
+}
 
 
 class TimestampMixin:
@@ -90,6 +102,12 @@ class User(UserMixin, TimestampMixin, db.Model):
     role = db.Column(db.String(32), nullable=False, default="producer")
     status = db.Column(db.String(32), nullable=False, default="active")
     last_login = db.Column(db.DateTime)
+    notification_preferences = db.Column(
+        db.JSON, default=lambda: dict(DEFAULT_NOTIFICATION_PREFERENCES)
+    )
+    two_factor_enabled = db.Column(db.Boolean, nullable=False, default=True)
+    two_factor_secret = db.Column(db.String(255))
+    two_factor_expires_at = db.Column(db.DateTime)
 
     producer = db.relationship(
     "Producer",
@@ -110,6 +128,33 @@ class User(UserMixin, TimestampMixin, db.Model):
         if getattr(self, "producer", None) and self.producer and self.producer.display_name:
             return self.producer.display_name
         return self.email
+
+    def wants_notification(self, category: str) -> bool:
+        prefs = self.notification_preferences or {}
+        default = DEFAULT_NOTIFICATION_PREFERENCES.get(category, True)
+        return bool(prefs.get(category, default))
+
+    def set_notification_preferences(self, categories: list[str]) -> None:
+        allowed = set(DEFAULT_NOTIFICATION_PREFERENCES.keys())
+        selected = {key: (key in categories) for key in allowed}
+        self.notification_preferences = selected
+
+    def generate_two_factor_code(self) -> str:
+        code = f"{randbelow(1_000_000):06d}"
+        self.two_factor_secret = generate_password_hash(code)
+        self.two_factor_expires_at = datetime.utcnow() + timedelta(minutes=10)
+        return code
+
+    def verify_two_factor_code(self, candidate: str | None) -> bool:
+        if not candidate or not self.two_factor_secret:
+            return False
+        if self.two_factor_expires_at and self.two_factor_expires_at < datetime.utcnow():
+            return False
+        return check_password_hash(self.two_factor_secret, candidate.strip())
+
+    def clear_two_factor_challenge(self) -> None:
+        self.two_factor_secret = None
+        self.two_factor_expires_at = None
 
 
 @login_manager.user_loader

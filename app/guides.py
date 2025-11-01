@@ -182,7 +182,7 @@ def get_role_guides() -> List[Dict[str, object]]:
                 "billing",
                 "subscription",
                 "settings",
-                "nylas",
+                "resend",
                 "offices",
             ],
             "steps": [
@@ -192,7 +192,7 @@ def get_role_guides() -> List[Dict[str, object]]:
                         "Create new offices, assign agents, and manage workspace rosters from Admin → Offices & Team.",
                         "Adjust subscription plans, seat counts, and billing cadence using the subscription console walkthrough documented in admin.md.",
                         "Configure default product categories so new imports inherit the right tagging with no manual cleanup.",
-                        "Invite teammates with the correct role permissions and trigger Nylas onboarding emails instantly.",
+                        "Invite teammates with the correct role permissions and trigger Resend onboarding emails instantly.",
                     ],
                 },
                 {

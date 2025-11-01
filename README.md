@@ -30,7 +30,7 @@ app/
   imports.py         # Import pipeline (CSV upload, row persistence)
   reports.py         # Analytics & payout views
   workspaces.py      # Helper functions for workspace access control
-  nylas_email.py     # Nylas integration helpers for email notifications
+  resend_email.py    # Resend integration helpers for email notifications
   templates/         # Jinja2 templates (Bootstrap 5 + custom design)
   static/css/        # Custom styles
 app.py               # Entrypoint for WSGI/Flask CLI
@@ -78,7 +78,7 @@ admin.md             # Admin console operations guide
 3. **Configure environment variables** in the PythonAnywhere dashboard:
    - `SECRET_KEY` – strong random string.
    - `DATABASE_URL` (optional) – defaults to SQLite (`sqlite:///trackyoursheets.db`). For PythonAnywhere MySQL, supply `mysql+mysqlclient://user:password@host/dbname`.
-   - `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, `NYLAS_FROM_EMAIL`, `NYLAS_FROM_NAME` (optional), `NYLAS_NOTIFICATION_EMAILS` (optional comma list), and `NYLAS_SIGNUP_ALERT_EMAILS` (optional comma list) – enable Nylas-powered signup, invite, and import notifications.
+   - `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_FROM_NAME` (optional), `RESEND_NOTIFICATION_EMAILS` (optional comma list), and `RESEND_SIGNUP_ALERT_EMAILS` (optional comma list) – enable Resend-powered signup, invite, and import notifications.
    - Stripe sandbox keys: `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PUBLISHABLE_KEY`, and plan price IDs (`STRIPE_TEST_PRICE_STARTER`, `STRIPE_TEST_PRICE_GROWTH`, `STRIPE_TEST_PRICE_SCALE`).
    - Stripe live keys (when ready): `STRIPE_LIVE_SECRET_KEY`, `STRIPE_LIVE_PUBLISHABLE_KEY`, and matching live price IDs (`STRIPE_LIVE_PRICE_*`). Set `STRIPE_MODE=live` when deploying to production.
 4. **Run the seed command** once:
@@ -109,4 +109,4 @@ The seed command and modular design make it straightforward to add unit tests us
 
 ## Support
 
-For questions or contributions, please open an issue or contact the TrackYourSheets maintainers. Enhancements are welcome! Additional integration notes live in `docs/stripe.md` and `docs/nylas.md`.
+For questions or contributions, please open an issue or contact the TrackYourSheets maintainers. Enhancements are welcome! Additional integration notes live in `docs/stripe.md` and `docs/resend.md`.
