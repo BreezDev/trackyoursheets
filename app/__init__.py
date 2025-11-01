@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 load_dotenv()
+import json
 import os
 
 from flask import Flask
@@ -139,6 +140,51 @@ def create_app(test_config=None):
 def _ensure_schema_extensions() -> None:
     inspector = inspect(db.engine)
     existing_tables = set(inspector.get_table_names())
+
+    if "users" in existing_tables:
+        columns = {col["name"] for col in inspector.get_columns("users")}
+        migrations = []
+        if "notification_preferences" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN notification_preferences TEXT"
+            )
+        if "two_factor_enabled" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN two_factor_enabled BOOLEAN NOT NULL DEFAULT 1"
+            )
+        if "two_factor_secret" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN two_factor_secret VARCHAR(255)"
+            )
+        if "two_factor_expires_at" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN two_factor_expires_at DATETIME"
+            )
+
+        if migrations:
+            with db.engine.begin() as conn:
+                for statement in migrations:
+                    conn.execute(text(statement))
+
+        if "notification_preferences" not in columns:
+            from .models import DEFAULT_NOTIFICATION_PREFERENCES
+
+            default_json = json.dumps(DEFAULT_NOTIFICATION_PREFERENCES)
+            with db.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE users SET notification_preferences = :default WHERE notification_preferences IS NULL"
+                    ),
+                    {"default": default_json},
+                )
+
+        if "two_factor_enabled" not in columns:
+            with db.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE users SET two_factor_enabled = 1 WHERE two_factor_enabled IS NULL"
+                    )
+                )
 
     if "api_keys" in existing_tables:
         columns = {col["name"] for col in inspector.get_columns("api_keys")}
