@@ -80,12 +80,32 @@ def create_app(test_config=None):
     @app.context_processor
     def inject_globals():
         from datetime import datetime
+        from flask import session
+        from flask_login import current_user
         from .models import SubscriptionPlan
+        from .workspaces import get_accessible_workspaces
 
         plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
+        workspace_options = []
+        active_workspace = None
+        if current_user.is_authenticated:
+            workspace_options = get_accessible_workspaces(current_user)
+            stored_id = session.get("active_workspace_id")
+            if stored_id:
+                active_workspace = next(
+                    (ws for ws in workspace_options if ws.id == stored_id),
+                    None,
+                )
+            if not active_workspace and workspace_options:
+                active_workspace = workspace_options[0]
         return {
             "available_plans": plans,
             "current_year": datetime.utcnow().year,
+            "workspace_switcher": {
+                "options": workspace_options,
+                "active": active_workspace,
+            },
+            "support_email": "contact@trackyoursheets.com",
         }
 
     @app.cli.command("init-db")
@@ -99,7 +119,9 @@ def create_app(test_config=None):
             starter = SubscriptionPlan(
                 name="Starter",
                 tier=1,
-                price_per_user=79,
+                price_per_user=19.99,
+                included_users=5,
+                extra_user_price=1,
                 max_users=5,
                 max_carriers=5,
                 max_rows_per_month=15000,
@@ -110,7 +132,9 @@ def create_app(test_config=None):
             growth = SubscriptionPlan(
                 name="Growth",
                 tier=2,
-                price_per_user=129,
+                price_per_user=24.99,
+                included_users=25,
+                extra_user_price=1,
                 max_users=25,
                 max_carriers=25,
                 max_rows_per_month=100000,
@@ -121,7 +145,9 @@ def create_app(test_config=None):
             scale = SubscriptionPlan(
                 name="Scale",
                 tier=3,
-                price_per_user=189,
+                price_per_user=49.99,
+                included_users=100,
+                extra_user_price=1,
                 max_users=250,
                 max_carriers=999,
                 max_rows_per_month=500000,

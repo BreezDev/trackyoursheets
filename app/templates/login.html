@@ -9,7 +9,16 @@
         <form method="post">
           <div class="mb-3">
             <label class="form-label">Email</label>
-            <input type="email" name="email" class="form-control form-control-lg" required>
+            <input type="email" name="email" class="form-control form-control-lg" value="{{ login_email }}" required>
+            {% if login_hint %}
+            <div class="form-text {% if login_hint.deliverable is defined and login_hint.deliverable is sameas(false) %}text-warning{% else %}text-muted{% endif %}">
+              {% if login_hint.deliverable is defined and login_hint.deliverable is sameas(false) %}
+              Resend marked this address as undeliverable. Update it and try again.
+              {% else %}
+              We couldn't find that address in TrackYourSheets—double-check the spelling or use another inbox.
+              {% endif %}
+            </div>
+            {% endif %}
           </div>
           <div class="mb-3">
             <label class="form-label">Password</label>

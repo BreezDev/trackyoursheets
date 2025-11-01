@@ -11,8 +11,10 @@
         {% set signup_detail = plan_details_map.get(default_plan.id) if plan_details_map else default_plan_detail %}
         {% set signup_price_label = signup_detail.price_label if signup_detail and signup_detail.price_label else '$' ~ ('%.2f'|format(default_plan.price_per_user)) %}
         {% set signup_interval = signup_detail.billing_interval if signup_detail and signup_detail.billing_interval else 'month' %}
+        {% set included = signup_detail.included_users if signup_detail and signup_detail.included_users else default_plan.included_users %}
+        {% set extra = signup_detail.extra_user_price if signup_detail and signup_detail.extra_user_price else default_plan.extra_user_price %}
         <div class="alert alert-info" role="alert">
-          <strong>{{ default_plan.name }}</strong> is pre-selected for signup. Checkout will confirm payment of {{ signup_price_label }} per user each {{ signup_interval }}.
+          <strong>{{ default_plan.name }}</strong> is pre-selected for signup. Checkout will confirm payment of {{ signup_price_label }} per {{ signup_interval }}{% if included %} (includes {{ included }} user{{ '' if included == 1 else 's' }}{% if extra %}; ${{ '%.2f'|format(extra) }}/mo per additional seat{% endif %}){% endif %}.
         </div>
         {% endif %}
         <form method="post" class="mt-3">
@@ -58,12 +60,14 @@
           </div>
           <h3 class="h5 mb-1">{{ plan.name }}</h3>
           <p class="small text-muted mb-3">{{ plan.tagline }}</p>
-          <div class="h2 text-primary fw-bold mb-2">{{ plan.price_label }}<span class="fs-6 fw-normal text-muted"> / user / {{ plan.billing_interval }}</span></div>
-          {% if plan.price_source == 'stripe' %}
-          <div class="small text-muted mb-3">Live pricing from Stripe</div>
-          {% else %}
-          <div class="small text-muted mb-3">Standard monthly pricing</div>
-          {% endif %}
+          <div class="h2 text-primary fw-bold mb-2">{{ plan.price_label }}<span class="fs-6 fw-normal text-muted"> / {{ plan.billing_interval }}</span></div>
+          <div class="small text-muted mb-3">
+            {% if plan.included_users %}
+            Includes {{ plan.included_users }} user{{ '' if plan.included_users == 1 else 's' }}{% if plan.extra_user_price %} · ${{ '%.2f'|format(plan.extra_user_price) }}/mo per additional seat{% endif %}
+            {% else %}
+            Flexible monthly pricing.
+            {% endif %}
+          </div>
           <ul class="list-unstyled d-grid gap-2 small text-body-secondary mb-0">
             {% for item in plan.feature_points[:4] %}
             <li class="d-flex gap-2">

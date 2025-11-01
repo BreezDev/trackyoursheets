@@ -21,6 +21,7 @@ from .resend_email import (
     send_signup_alert,
     send_signup_welcome,
     send_two_factor_code_email,
+    verify_email_deliverability,
 )
 from sqlalchemy import func
 from .marketing import build_plan_details
@@ -50,11 +51,14 @@ def signup():
         elif User.query.filter_by(email=email).first():
             flash("Email already registered.", "danger")
         elif not default_plan:
-            flash("No plans are configured yet. Please contact support.", "danger")
+            flash("No plans are configured yet. Email contact@trackyoursheets.com for assistance.", "danger")
         else:
             stripe_gateway = current_app.extensions.get("stripe_gateway")
             if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
-                flash("Stripe payments are not configured. Contact support for assistance.", "danger")
+                flash(
+                    "Stripe payments are not configured. Email contact@trackyoursheets.com for assistance.",
+                    "danger",
+                )
                 return render_template(
                     "signup.html",
                     plans=plans,
@@ -160,19 +164,19 @@ def signup_cancelled():
 def signup_complete():
     session_id = request.args.get("session_id")
     if not session_id:
-        flash("Checkout session missing. Please contact support.", "danger")
+        flash("Checkout session missing. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("auth.login"))
 
     stripe_gateway = current_app.extensions.get("stripe_gateway")
     if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
-        flash("Stripe integration is not configured. Please contact support.", "danger")
+        flash("Stripe integration is not configured. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("auth.login"))
 
     try:
         session = stripe_gateway.retrieve_checkout_session(session_id)
     except Exception:
         current_app.logger.exception("Failed to retrieve Stripe checkout session")
-        flash("We couldn't verify your payment. Please contact support.", "danger")
+        flash("We couldn't verify your payment. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("auth.login"))
 
     if getattr(session, "status", None) != "complete":
@@ -181,23 +185,23 @@ def signup_complete():
 
     user_id = getattr(session, "client_reference_id", None)
     if not user_id:
-        flash("We couldn't locate your account. Please contact support.", "danger")
+        flash("We couldn't locate your account. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("auth.login"))
 
     try:
         user_id_int = int(user_id)
     except (TypeError, ValueError):
-        flash("We couldn't locate your account. Please contact support.", "danger")
+        flash("We couldn't locate your account. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("auth.login"))
 
     user = User.query.get(user_id_int)
     if not user:
-        flash("We couldn't locate your account. Please contact support.", "danger")
+        flash("We couldn't locate your account. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("auth.login"))
 
     org = user.organization
     if not org:
-        flash("Your organization was not found. Please contact support.", "danger")
+        flash("Your organization was not found. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("auth.login"))
 
     subscription_record = Subscription.query.filter_by(org_id=org.id).first()
@@ -270,9 +274,13 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for("main.dashboard"))
 
+    login_hint = session.pop("login_email_hint", None)
+    prefill_email = request.args.get("email") or (login_hint.get("value") if login_hint else "")
+
     if request.method == "POST":
         email = request.form.get("email")
         password = request.form.get("password")
+        prefill_email = email or prefill_email
         user = User.query.filter_by(email=email).first()
         if user and user.check_password(password):
             if user.two_factor_enabled:
@@ -294,11 +302,34 @@ def login():
             if user.wants_notification("login"):
                 send_login_notification(user.email, ip_address=request.remote_addr)
             flash("Logged in successfully.", "success")
+            if user.must_change_password:
+                flash(
+                    "For security, update your password before exploring your workspace.",
+                    "warning",
+                )
+                return redirect(url_for("main.settings") + "#profile")
             next_page = request.args.get("next")
             return redirect(next_page or url_for("main.dashboard"))
+        if not user:
+            deliverable = verify_email_deliverability(email)
+            session["login_email_hint"] = {
+                "value": email,
+                "deliverable": deliverable,
+            }
+            if deliverable is False:
+                flash(
+                    "We couldn't find that email and Resend flagged it as undeliverable. Update it below and try again.",
+                    "danger",
+                )
+            else:
+                flash(
+                    "We couldn't find that email in TrackYourSheets. Double-check the address or start a new signup.",
+                    "danger",
+                )
+            return redirect(url_for("auth.login", email=email))
         flash("Invalid credentials.", "danger")
 
-    return render_template("login.html")
+    return render_template("login.html", login_email=prefill_email, login_hint=login_hint)
 
 
 @auth_bp.route("/two-factor", methods=["GET", "POST"])
@@ -332,6 +363,12 @@ def two_factor():
             if is_signup:
                 flash("Account verified! Welcome to TrackYourSheets.", "success")
                 return redirect(url_for("main.onboarding"))
+            if user.must_change_password:
+                flash(
+                    "For security, update your password before exploring your workspace.",
+                    "warning",
+                )
+                return redirect(url_for("main.settings") + "#profile")
             flash("Logged in successfully.", "success")
             return redirect(next_page or url_for("main.dashboard"))
 
@@ -341,6 +378,7 @@ def two_factor():
         "two_factor.html",
         email=user.email,
         intent=intent,
+        allow_email_update=intent == "signup",
     )
 
 
@@ -371,6 +409,79 @@ def resend_two_factor():
     send_two_factor_code_email(user.email, code, intent=intent)
     flash("We've sent a fresh verification code to your email.", "info")
     return redirect(url_for("auth.two_factor"))
+
+
+@auth_bp.route("/two-factor/update-email", methods=["POST"])
+def update_two_factor_email():
+    user_id = session.get("two_factor_user_id")
+    if not user_id:
+        flash("Your verification session expired. Please start again.", "warning")
+        return redirect(url_for("auth.login"))
+
+    user = User.query.get(user_id)
+    if not user:
+        session.pop("two_factor_user_id", None)
+        flash("We couldn't find that account. Please sign in again.", "danger")
+        return redirect(url_for("auth.login"))
+
+    if session.get("two_factor_intent") != "signup":
+        flash("Email updates are only available during signup verification.", "info")
+        return redirect(url_for("auth.two_factor"))
+
+    new_email = (request.form.get("new_email") or "").strip()
+    if not new_email:
+        flash("Enter a valid email address.", "danger")
+        return redirect(url_for("auth.two_factor"))
+
+    conflict = (
+        User.query.filter(func.lower(User.email) == new_email.lower())
+        .filter(User.id != user.id)
+        .first()
+    )
+    if conflict:
+        flash("That email is already registered. Try another.", "danger")
+        return redirect(url_for("auth.two_factor"))
+
+    user.email = new_email
+    code = user.generate_two_factor_code()
+    db.session.commit()
+    send_two_factor_code_email(user.email, code, intent="signup")
+    flash("Updated your email and sent a new verification code.", "success")
+    return redirect(url_for("auth.two_factor"))
+
+
+@auth_bp.route("/settings/password/verify", methods=["GET", "POST"])
+@login_required
+def password_change_verify():
+    payload = session.get("password_change")
+    if not payload or payload.get("user_id") != current_user.id:
+        flash("Your password change request expired. Try again from settings.", "warning")
+        session.pop("password_change", None)
+        return redirect(url_for("main.settings"))
+
+    if request.method == "POST":
+        if request.form.get("intent") == "resend":
+            code = current_user.generate_two_factor_code()
+            db.session.commit()
+            send_two_factor_code_email(current_user.email, code, intent="password_change")
+            flash("We've sent a fresh verification code to your email.", "info")
+            return redirect(url_for("auth.password_change_verify"))
+
+        code = request.form.get("code")
+        if current_user.verify_two_factor_code(code):
+            current_user.password_hash = payload.get("password_hash", current_user.password_hash)
+            current_user.must_change_password = False
+            current_user.clear_two_factor_challenge()
+            db.session.commit()
+            session.pop("password_change", None)
+            flash("Password updated successfully.", "success")
+            return redirect(url_for("main.settings"))
+        flash("That verification code was invalid or expired. Try again.", "danger")
+
+    return render_template(
+        "password_change_verify.html",
+        email=current_user.email,
+    )
 
 
 @auth_bp.route("/logout")

@@ -16,12 +16,12 @@ The landing card summarises your plan, usage, and quick stats. Billing plan chan
 
 1. Use **New office** to register each physical or virtual office your agency operates.
 2. Create a **New workspace** for every line of business or producer pod and optionally assign an agent user.
-3. Agents see only the workspaces they manage; owners/admins can reassign agents at any time using the workspace list dropdown.
+3. Agents see only the workspaces they manage; owners/admins can reassign agents at any time using the workspace list dropdown. Members can now belong to multiple offices and workspaces simultaneously, and users can switch contexts from the new workspace selector in-app.
 
 ## Team management
 
 1. Click **Invite** to open the teammate modal.
-2. Provide an email and assign a role. When inviting agents or producers, pick the workspace they should manage or operate in. New users receive a temporary password (`ChangeMe123!`) and should update it on first login.
+2. Provide an email and assign a role. When inviting agents or producers, pick the workspace they should manage or operate in. The system now generates a unique temporary password, emails it to the invitee, and flags the account to require a reset on first login.
 3. Remove a user via the list’s **Remove** button (you can’t delete your own account). Removing an agent releases their workspace so another agent can be assigned.
 
 ## Carrier catalogue
