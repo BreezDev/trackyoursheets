@@ -15,6 +15,49 @@ migrate = Migrate()
 login_manager = LoginManager()
 
 
+DEFAULT_SUBSCRIPTION_PLANS: tuple[dict[str, object], ...] = (
+    {
+        "name": "Starter",
+        "tier": 1,
+        "price_per_user": 19.99,
+        "included_users": 5,
+        "extra_user_price": 1,
+        "max_users": 5,
+        "max_carriers": 5,
+        "max_rows_per_month": 15_000,
+        "includes_quickbooks": False,
+        "includes_producer_portal": True,
+        "includes_api": False,
+    },
+    {
+        "name": "Growth",
+        "tier": 2,
+        "price_per_user": 24.99,
+        "included_users": 25,
+        "extra_user_price": 1,
+        "max_users": 25,
+        "max_carriers": 25,
+        "max_rows_per_month": 100_000,
+        "includes_quickbooks": True,
+        "includes_producer_portal": True,
+        "includes_api": False,
+    },
+    {
+        "name": "Scale",
+        "tier": 3,
+        "price_per_user": 49.99,
+        "included_users": 100,
+        "extra_user_price": 1,
+        "max_users": 250,
+        "max_carriers": 999,
+        "max_rows_per_month": 500_000,
+        "includes_quickbooks": True,
+        "includes_producer_portal": True,
+        "includes_api": True,
+    },
+)
+
+
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
 
@@ -58,6 +101,7 @@ def create_app(test_config=None):
     with app.app_context():
         db.create_all()
         _ensure_schema_extensions()
+        _ensure_default_plans()
         _ensure_master_admin()
         _seed_default_categories()
     from .auth import auth_bp
@@ -111,53 +155,13 @@ def create_app(test_config=None):
     @app.cli.command("init-db")
     def init_db_command():
         """Initialise the database and seed default plans."""
-        from .models import SubscriptionPlan
 
         db.create_all()
-
-        if SubscriptionPlan.query.count() == 0:
-            starter = SubscriptionPlan(
-                name="Starter",
-                tier=1,
-                price_per_user=19.99,
-                included_users=5,
-                extra_user_price=1,
-                max_users=5,
-                max_carriers=5,
-                max_rows_per_month=15000,
-                includes_quickbooks=False,
-                includes_producer_portal=True,
-                includes_api=False,
-            )
-            growth = SubscriptionPlan(
-                name="Growth",
-                tier=2,
-                price_per_user=24.99,
-                included_users=25,
-                extra_user_price=1,
-                max_users=25,
-                max_carriers=25,
-                max_rows_per_month=100000,
-                includes_quickbooks=True,
-                includes_producer_portal=True,
-                includes_api=False,
-            )
-            scale = SubscriptionPlan(
-                name="Scale",
-                tier=3,
-                price_per_user=49.99,
-                included_users=100,
-                extra_user_price=1,
-                max_users=250,
-                max_carriers=999,
-                max_rows_per_month=500000,
-                includes_quickbooks=True,
-                includes_producer_portal=True,
-                includes_api=True,
-            )
-            db.session.add_all([starter, growth, scale])
-            db.session.commit()
-            print("Seeded subscription plans.")
+        created = _ensure_default_plans()
+        if created:
+            print(f"Seeded {created} subscription plan(s).")
+        else:
+            print("Subscription plans already present.")
         print("Database ready.")
 
     return app
@@ -303,3 +307,26 @@ def _ensure_master_admin() -> None:
     user.set_password(master_password)
     db.session.add(user)
     db.session.commit()
+
+
+def _ensure_default_plans() -> int:
+    """Create default subscription plans if none exist.
+
+    Returns the number of plans created.
+    """
+
+    from .models import SubscriptionPlan
+
+    created = 0
+    for definition in DEFAULT_SUBSCRIPTION_PLANS:
+        exists = SubscriptionPlan.query.filter_by(name=definition["name"]).first()
+        if exists:
+            continue
+        plan = SubscriptionPlan(**definition)
+        db.session.add(plan)
+        created += 1
+
+    if created:
+        db.session.commit()
+
+    return created
