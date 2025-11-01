@@ -39,7 +39,7 @@ from .models import (
     Workspace,
 )
 from .workspaces import get_accessible_workspaces, get_accessible_workspace_ids
-from .nylas_email import send_workspace_invitation
+from .resend_email import send_workspace_invitation
 from .guides import get_role_guides
 from .marketing import build_plan_details
 
