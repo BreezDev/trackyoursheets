@@ -13,10 +13,13 @@ from flask import (
     url_for,
     flash,
     redirect,
+    session,
 )
 from flask_login import current_user, login_required
 
 from sqlalchemy import func, or_
+
+from werkzeug.security import generate_password_hash
 
 from .models import (
     AuditLog,
@@ -39,6 +42,7 @@ from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces,
 from . import db
 from .resend_email import (
     send_notification_email,
+    send_two_factor_code_email,
     send_workspace_chat_notification,
     send_workspace_update_notification,
 )
@@ -173,6 +177,11 @@ def landing():
     )
 
 
+@main_bp.route("/contact")
+def contact():
+    return render_template("contact.html")
+
+
 @main_bp.route("/dashboard")
 @login_required
 def dashboard():
@@ -181,14 +190,25 @@ def dashboard():
     workspaces = get_accessible_workspaces(current_user)
 
     requested_workspace_id = request.args.get("workspace_id", type=int)
+    stored_workspace_id = session.get("active_workspace_id")
     active_workspace = None
     if requested_workspace_id and user_can_access_workspace(current_user, requested_workspace_id):
         active_workspace = next(
             (ws for ws in workspaces if ws.id == requested_workspace_id),
             None,
         )
+        if active_workspace:
+            session["active_workspace_id"] = active_workspace.id
+    elif stored_workspace_id and user_can_access_workspace(current_user, stored_workspace_id):
+        active_workspace = next(
+            (ws for ws in workspaces if ws.id == stored_workspace_id),
+            None,
+        )
     elif workspaces:
         active_workspace = workspaces[0]
+        session["active_workspace_id"] = active_workspace.id
+    else:
+        session.pop("active_workspace_id", None)
 
     import_query = ImportBatch.query.filter_by(org_id=org_id)
     if workspace_ids:
@@ -279,6 +299,74 @@ def dashboard():
         chat_messages=chat_messages,
         chat_messages_payload=chat_payload,
     )
+
+
+@main_bp.route("/workspaces/switch", methods=["POST"])
+@login_required
+def switch_workspace():
+    workspace_id = request.form.get("workspace_id", type=int)
+    next_url = request.form.get("next") or request.referrer or url_for("main.dashboard")
+    if workspace_id and user_can_access_workspace(current_user, workspace_id):
+        session["active_workspace_id"] = workspace_id
+    else:
+        flash("You do not have access to that workspace.", "danger")
+    return redirect(next_url)
+
+
+@main_bp.route("/workspaces/join", methods=["POST"])
+@login_required
+def join_workspace():
+    workspace_id = request.form.get("workspace_id", type=int)
+    next_url = request.form.get("next") or url_for("main.settings")
+    if not workspace_id:
+        flash("Select a workspace to join.", "danger")
+        return redirect(next_url)
+    workspace = Workspace.query.filter_by(id=workspace_id, org_id=current_user.org_id).first()
+    if not workspace:
+        flash("Workspace not found.", "danger")
+        return redirect(next_url)
+    current_user.record_workspace_membership(workspace, role=current_user.role)
+    db.session.commit()
+    session["active_workspace_id"] = workspace.id
+    flash(f"Joined {workspace.name}.", "success")
+    return redirect(next_url)
+
+
+@main_bp.route("/workspaces/<int:workspace_id>/leave", methods=["POST"])
+@login_required
+def leave_workspace(workspace_id: int):
+    next_url = request.form.get("next") or url_for("main.settings")
+    membership = next(
+        (
+            m
+            for m in getattr(current_user, "workspace_memberships", []) or []
+            if m.workspace_id == workspace_id
+        ),
+        None,
+    )
+    if not membership:
+        flash("You are not assigned to that workspace.", "warning")
+        return redirect(next_url)
+    if (
+        current_user.role == "agent"
+        and getattr(current_user, "managed_workspace", None)
+        and current_user.managed_workspace.id == workspace_id
+    ):
+        flash("Agents must remain assigned to their managed workspace.", "danger")
+        return redirect(next_url)
+    if (
+        current_user.role == "producer"
+        and getattr(current_user, "producer", None)
+        and current_user.producer.workspace_id == workspace_id
+    ):
+        flash("You cannot leave your primary producer workspace.", "danger")
+        return redirect(next_url)
+    db.session.delete(membership)
+    db.session.commit()
+    if session.get("active_workspace_id") == workspace_id:
+        session.pop("active_workspace_id", None)
+    flash("Workspace access removed.", "info")
+    return redirect(next_url)
 
 
 @main_bp.route("/audit")
@@ -394,6 +482,7 @@ def settings():
             new_password = request.form.get("new_password") or ""
             confirm_password = request.form.get("confirm_password") or ""
             errors = False
+            pending_password_hash: str | None = None
 
             if not new_email_raw:
                 flash("Email is required.", "danger")
@@ -424,10 +513,27 @@ def settings():
                     flash("Passwords do not match.", "danger")
                     errors = True
                 else:
-                    current_user.set_password(new_password)
+                    pending_password_hash = generate_password_hash(new_password)
 
             if errors:
                 db.session.rollback()
+            elif pending_password_hash:
+                code = current_user.generate_two_factor_code()
+                db.session.commit()
+                send_two_factor_code_email(
+                    current_user.email,
+                    code,
+                    intent="password_change",
+                )
+                session["password_change"] = {
+                    "user_id": current_user.id,
+                    "password_hash": pending_password_hash,
+                }
+                flash(
+                    "Enter the verification code we emailed you to confirm your new password.",
+                    "info",
+                )
+                return redirect(url_for("auth.password_change_verify"))
             else:
                 db.session.commit()
                 flash("Profile updated successfully.", "success")
@@ -456,7 +562,7 @@ def settings():
 
             if not stripe_enabled or not stripe_gateway:
                 flash(
-                    "Stripe billing is not configured. Contact support to change plans.",
+                    "Stripe billing is not configured. Email contact@trackyoursheets.com to change plans.",
                     "danger",
                 )
                 return redirect(url_for("main.settings"))
@@ -492,7 +598,7 @@ def settings():
                     "Stripe checkout creation failed for plan change"
                 )
                 flash(
-                    "We couldn't start Stripe checkout. Please try again or contact support.",
+                    "We couldn't start Stripe checkout. Please try again or email contact@trackyoursheets.com.",
                     "danger",
                 )
                 return redirect(url_for("main.settings"))
@@ -617,10 +723,23 @@ def settings():
         "producers": Producer.query.filter_by(org_id=org.id).count(),
         "carriers": Carrier.query.filter_by(org_id=org.id).count(),
     }
-    seat_limit = org.plan.max_users if org.plan and org.plan.max_users else None
+    included_seats = org.plan.included_users if org.plan else None
+    if included_seats is None and org.plan and org.plan.max_users:
+        included_seats = org.plan.max_users
+    extra_seat_price = org.plan.extra_user_price if org.plan else None
     seats_remaining = None
-    if seat_limit is not None:
-        seats_remaining = max(seat_limit - usage_snapshot["users"], 0)
+    if included_seats is not None:
+        seats_remaining = max(included_seats - usage_snapshot["users"], 0)
+    accessible_workspaces = get_accessible_workspaces(current_user)
+    joined_workspace_ids = {ws.id for ws in accessible_workspaces}
+    all_workspaces = (
+        Workspace.query.filter_by(org_id=org.id)
+        .order_by(Workspace.name.asc())
+        .all()
+    )
+    joinable_workspaces = [
+        ws for ws in all_workspaces if ws.id not in joined_workspace_ids
+    ]
 
     stripe_publishable_key = None
     if stripe_gateway and getattr(stripe_gateway, "publishable_key", None):
@@ -637,7 +756,7 @@ def settings():
         subscription=subscription,
         can_manage_plan=can_manage_plan,
         usage_snapshot=usage_snapshot,
-        seat_limit=seat_limit,
+        seat_limit=included_seats,
         seats_remaining=seats_remaining,
         plan_details_map=plan_details_map,
         current_plan_detail=current_plan_detail,
@@ -649,6 +768,9 @@ def settings():
         user_notifications=current_user.notification_preferences
         or DEFAULT_NOTIFICATION_PREFERENCES,
         two_factor_enabled=current_user.two_factor_enabled,
+        accessible_workspaces=accessible_workspaces,
+        joinable_workspaces=joinable_workspaces,
+        extra_seat_price=extra_seat_price,
     )
 
 
@@ -670,7 +792,7 @@ def open_billing_portal():
     except Exception as exc:  # pragma: no cover - Stripe errors logged only
         current_app.logger.error("Stripe billing portal error", exc_info=exc)
         flash(
-            "We couldn't open the Stripe billing portal. Please try again or contact support.",
+            "We couldn't open the Stripe billing portal. Please try again or email contact@trackyoursheets.com.",
             "danger",
         )
         return redirect(url_for("main.settings"))
@@ -682,19 +804,19 @@ def open_billing_portal():
 def checkout_complete():
     session_id = request.args.get("session_id")
     if not session_id:
-        flash("Checkout session missing. Please contact support if this persists.", "danger")
+        flash("Checkout session missing. Email contact@trackyoursheets.com if this persists.", "danger")
         return redirect(url_for("main.settings"))
 
     stripe_gateway = current_app.extensions.get("stripe_gateway")
     if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
-        flash("Stripe integration is not configured. Please contact support.", "danger")
+        flash("Stripe integration is not configured. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("main.settings"))
 
     try:
         session = stripe_gateway.retrieve_checkout_session(session_id)
     except Exception:
         current_app.logger.exception("Failed to retrieve Stripe checkout session")
-        flash("We couldn't verify the Stripe checkout session. Please contact support.", "danger")
+        flash("We couldn't verify the Stripe checkout session. Email contact@trackyoursheets.com for assistance.", "danger")
         return redirect(url_for("main.settings"))
 
     if getattr(session, "status", None) != "complete":

@@ -49,6 +49,32 @@
             {% endif %}
           </ul>
           <div class="d-flex align-items-center gap-3">
+            {% if workspace_switcher.options %}
+            <div class="dropdown">
+              <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                {% if workspace_switcher.active %}
+                  {{ workspace_switcher.active.office.name ~ ' · ' if workspace_switcher.active.office }}{{ workspace_switcher.active.name }}
+                {% else %}
+                  All workspaces
+                {% endif %}
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                {% for workspace in workspace_switcher.options %}
+                <li>
+                  <form method="post" action="{{ url_for('main.switch_workspace') }}">
+                    <input type="hidden" name="workspace_id" value="{{ workspace.id }}">
+                    <input type="hidden" name="next" value="{{ request.url }}">
+                    <button type="submit" class="dropdown-item {% if workspace_switcher.active and workspace_switcher.active.id == workspace.id %}active{% endif %}">
+                      {{ workspace.office.name ~ ' · ' if workspace.office }}{{ workspace.name }}
+                    </button>
+                  </form>
+                </li>
+                {% endfor %}
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="{{ url_for('main.settings') }}#workspace-access">Manage access…</a></li>
+              </ul>
+            </div>
+            {% endif %}
             <span class="text-white-50 small">{{ current_user.email }}</span>
             <a class="btn btn-outline-light btn-sm" href="{{ url_for('auth.logout') }}">Logout</a>
           </div>
@@ -62,6 +88,9 @@
             </li>
             <li class="nav-item">
               <a class="nav-link" href="{{ url_for('main.landing') }}#workflow">Workflow</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('main.contact') }}">Contact</a>
             </li>
           </ul>
           <div class="d-flex flex-column flex-lg-row gap-2">

@@ -55,6 +55,8 @@ class SubscriptionPlan(db.Model):
     name = db.Column(db.String(80), nullable=False)
     tier = db.Column(db.Integer, nullable=False, default=0)
     price_per_user = db.Column(db.Numeric(10, 2), nullable=False)
+    included_users = db.Column(db.Integer)
+    extra_user_price = db.Column(db.Numeric(10, 2))
     max_users = db.Column(db.Integer, nullable=False)
     max_carriers = db.Column(db.Integer, nullable=False)
     max_rows_per_month = db.Column(db.Integer, nullable=False)
@@ -74,6 +76,12 @@ class Office(TimestampMixin, db.Model):
     timezone = db.Column(db.String(64))
 
     workspaces = db.relationship("Workspace", backref="office", lazy=True)
+    memberships = db.relationship(
+        "OfficeMembership",
+        backref="office",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
 
 
 class Workspace(TimestampMixin, db.Model):
@@ -90,6 +98,34 @@ class Workspace(TimestampMixin, db.Model):
         backref=db.backref("managed_workspace", uselist=False),
         foreign_keys=[agent_id],
     )
+    memberships = db.relationship(
+        "WorkspaceMembership",
+        backref="workspace",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+
+
+class OfficeMembership(TimestampMixin, db.Model):
+    __tablename__ = "office_memberships"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    office_id = db.Column(db.Integer, db.ForeignKey("offices.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    role = db.Column(db.String(32))
+
+
+class WorkspaceMembership(TimestampMixin, db.Model):
+    __tablename__ = "workspace_memberships"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    workspace_id = db.Column(
+        db.Integer, db.ForeignKey("workspaces.id"), nullable=False
+    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    role = db.Column(db.String(32))
 
 
 class User(UserMixin, TimestampMixin, db.Model):
@@ -101,6 +137,7 @@ class User(UserMixin, TimestampMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(32), nullable=False, default="producer")
     status = db.Column(db.String(32), nullable=False, default="active")
+    must_change_password = db.Column(db.Boolean, nullable=False, default=False)
     last_login = db.Column(db.DateTime)
     notification_preferences = db.Column(
         db.JSON, default=lambda: dict(DEFAULT_NOTIFICATION_PREFERENCES)
@@ -110,10 +147,22 @@ class User(UserMixin, TimestampMixin, db.Model):
     two_factor_expires_at = db.Column(db.DateTime)
 
     producer = db.relationship(
-    "Producer",
-    backref="user",
-    uselist=False,
-    foreign_keys="Producer.user_id"
+        "Producer",
+        backref="user",
+        uselist=False,
+        foreign_keys="Producer.user_id",
+    )
+    workspace_memberships = db.relationship(
+        "WorkspaceMembership",
+        backref="user",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+    office_memberships = db.relationship(
+        "OfficeMembership",
+        backref="user",
+        lazy=True,
+        cascade="all, delete-orphan",
     )
 
 
@@ -155,6 +204,51 @@ class User(UserMixin, TimestampMixin, db.Model):
     def clear_two_factor_challenge(self) -> None:
         self.two_factor_secret = None
         self.two_factor_expires_at = None
+
+    def record_workspace_membership(self, workspace: "Workspace", role: str | None = None) -> None:
+        if not workspace:
+            return
+        existing = next(
+            (
+                membership
+                for membership in self.workspace_memberships
+                if membership.workspace_id == workspace.id
+            ),
+            None,
+        )
+        if existing:
+            if role and existing.role != role:
+                existing.role = role
+            return
+        membership = WorkspaceMembership(
+            org_id=self.org_id,
+            workspace_id=workspace.id,
+            user_id=self.id,
+            role=role,
+        )
+        self.workspace_memberships.append(membership)
+        if workspace.office:
+            self.record_office_membership(workspace.office)
+
+    def record_office_membership(self, office: "Office") -> None:
+        if not office:
+            return
+        existing = next(
+            (
+                membership
+                for membership in self.office_memberships
+                if membership.office_id == office.id
+            ),
+            None,
+        )
+        if existing:
+            return
+        membership = OfficeMembership(
+            org_id=self.org_id,
+            office_id=office.id,
+            user_id=self.id,
+        )
+        self.office_memberships.append(membership)
 
 
 @login_manager.user_loader

@@ -49,6 +49,14 @@ def _plan_access_level(plan: SubscriptionPlan) -> str:
 
 def _plan_feature_points(plan: SubscriptionPlan) -> list[str]:
     features: list[str] = []
+    included = plan.included_users or plan.max_users
+    if included:
+        seat_phrase = f"Includes {included:,} user{'s' if included != 1 else ''}"
+        if plan.extra_user_price:
+            seat_phrase += f" · ${float(plan.extra_user_price):.2f}/mo per extra seat"
+        features.append(seat_phrase)
+    else:
+        features.append("Flexible team seats")
     features.append(_format_cap("Team seats", plan.max_users))
     features.append("Unlimited carrier connections & data sync")
     features.append(_format_cap("Rows reconciled / month", plan.max_rows_per_month))
@@ -101,6 +109,8 @@ def build_plan_details(
                 "name": plan.name,
                 "price_label": price_label,
                 "price_per_user": price_amount,
+                "included_users": plan.included_users,
+                "extra_user_price": float(plan.extra_user_price) if plan.extra_user_price else None,
                 "price_source": price_source,
                 "billing_interval": billing_interval,
                 "tagline": _plan_tagline(plan),

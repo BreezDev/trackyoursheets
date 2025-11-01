@@ -108,12 +108,14 @@
             </div>
             <h3 class="h3 mb-1">{{ plan.name }}</h3>
             <p class="text-muted">{{ plan.tagline }}</p>
-            <div class="display-5 fw-bold text-primary">{{ plan.price_label }}<span class="fs-5 text-muted fw-normal"> / user / {{ plan.billing_interval }}</span></div>
-            {% if plan.price_source == 'stripe' %}
-            <div class="small text-muted mb-2">Live pricing from Stripe</div>
-            {% else %}
-            <div class="small text-muted mb-2">Standard monthly pricing</div>
-            {% endif %}
+            <div class="display-5 fw-bold text-primary">{{ plan.price_label }}<span class="fs-5 text-muted fw-normal"> / {{ plan.billing_interval }}</span></div>
+            <div class="small text-muted mb-2">
+              {% if plan.included_users %}
+              Includes {{ plan.included_users }} user{{ '' if plan.included_users == 1 else 's' }}{% if plan.extra_user_price %} · ${{ '%.2f'|format(plan.extra_user_price) }}/mo per additional seat{% endif %}
+              {% else %}
+              Flexible monthly pricing.
+              {% endif %}
+            </div>
             <hr>
             <ul class="list-unstyled d-grid gap-2 mb-4">
               {% for item in plan.feature_points %}
@@ -162,7 +164,7 @@
       <p class="lead text-white-75 mb-4">Launch TrackYourSheets in minutes, invite your team, and watch your operations transform.</p>
       <div class="d-flex flex-column flex-sm-row justify-content-center gap-3">
         <a href="{{ url_for('auth.signup') }}" class="btn btn-light btn-lg">Start free trial</a>
-        <a href="mailto:hello@trackyoursheets.com" class="btn btn-outline-light btn-lg">Book a walkthrough</a>
+        <a href="mailto:{{ support_email }}" class="btn btn-outline-light btn-lg">Book a walkthrough</a>
       </div>
     </div>
   </section>

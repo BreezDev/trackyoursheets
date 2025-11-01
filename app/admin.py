@@ -70,8 +70,15 @@ def index():
         .filter(User.status == "active")
         .count()
     )
-    seat_limit = org.plan.max_users if org.plan and org.plan.max_users else None
+    seat_limit = None
+    included_seats = None
+    extra_seat_price = None
     seats_remaining = None
+    if org.plan:
+        included_seats = org.plan.included_users or org.plan.max_users
+        extra_seat_price = org.plan.extra_user_price
+        if included_seats:
+            seat_limit = included_seats
     if seat_limit is not None:
         seats_remaining = max(seat_limit - seat_usage, 0)
     carrier_usage = Carrier.query.filter_by(org_id=current_user.org_id).count()
@@ -158,10 +165,15 @@ def index():
     if org.plan:
         plan_permissions["can_create_api_keys"] = org.plan.includes_api
         if seat_limit is not None and seat_usage >= seat_limit:
-            plan_permissions["can_invite_producers"] = False
-            plan_permissions[
-                "invite_disabled_reason"
-            ] = f"{org.plan.name} includes up to {seat_limit} seats. Upgrade to add more teammates."
+            if extra_seat_price:
+                plan_permissions["invite_disabled_reason"] = (
+                    f"You've used all {seat_limit} included seats. Additional users are ${float(extra_seat_price):.2f} per month."
+                )
+            else:
+                plan_permissions["can_invite_producers"] = False
+                plan_permissions[
+                    "invite_disabled_reason"
+                ] = f"{org.plan.name} includes up to {seat_limit} seats. Upgrade to add more teammates."
 
     return render_template(
         "admin/index.html",
@@ -183,6 +195,8 @@ def index():
         seat_usage=seat_usage,
         seat_limit=seat_limit,
         seats_remaining=seats_remaining,
+        included_seats=included_seats,
+        extra_seat_price=extra_seat_price,
         carrier_usage=carrier_usage,
         producer_usage=producer_usage,
     )
@@ -198,7 +212,7 @@ def create_user():
     workspace_id_raw = request.form.get("workspace_id")
     workspace_id = int(workspace_id_raw) if workspace_id_raw else None
     display_name = request.form.get("display_name") or request.form.get("name")
-    password = request.form.get("password", "ChangeMe123!")
+    temporary_password = secrets.token_urlsafe(10)
 
     if not email:
         flash("Email is required.", "danger")
@@ -218,12 +232,22 @@ def create_user():
             .filter(User.status == "active")
             .count()
         )
-        if plan.max_users and active_users >= plan.max_users:
-            flash(
-                f"{plan.name} includes up to {plan.max_users} active users. Upgrade your plan to invite more teammates.",
-                "warning",
-            )
-            return redirect(url_for("admin.index"))
+        included_limit = plan.included_users or plan.max_users
+        if included_limit and active_users >= included_limit:
+            if plan.extra_user_price:
+                flash(
+                    (
+                        f"You've reached the {included_limit} seats included with {plan.name}. "
+                        f"Additional users will be billed at ${float(plan.extra_user_price):.2f}/month each."
+                    ),
+                    "info",
+                )
+            else:
+                flash(
+                    f"{plan.name} includes up to {included_limit} active users. Upgrade your plan to invite more teammates.",
+                    "warning",
+                )
+                return redirect(url_for("admin.index"))
     target_workspace = None
     invited_workspace = None
     if role in {"agent", "producer"}:
@@ -246,8 +270,8 @@ def create_user():
                 flash("You cannot add users to that workspace.", "danger")
                 return redirect(url_for("admin.index"))
 
-    user = User(email=email, role=role, org_id=org.id)
-    user.set_password(password)
+    user = User(email=email, role=role, org_id=org.id, must_change_password=True)
+    user.set_password(temporary_password)
     db.session.add(user)
     db.session.flush()
 
@@ -277,13 +301,27 @@ def create_user():
         target_workspace.agent_id = user.id
         invited_workspace = target_workspace
 
+    if invited_workspace:
+        user.record_workspace_membership(invited_workspace, role=role)
+
     db.session.commit()
     if invited_workspace and email:
+        login_target = url_for(
+            "main.dashboard", workspace_id=invited_workspace.id, _external=True
+        )
+        login_url = url_for(
+            "auth.login",
+            email=email,
+            next=login_target,
+            _external=True,
+        )
         send_workspace_invitation(
             recipient=email,
             inviter=current_user,
             workspace=invited_workspace,
             role=role,
+            temporary_password=temporary_password,
+            login_url=login_url,
         )
     flash(f"{role.title()} user created.", "success")
     return redirect(url_for("admin.index"))
@@ -360,6 +398,9 @@ def create_workspace():
         agent_id=agent_user.id if agent_user else None,
     )
     db.session.add(workspace)
+    db.session.flush()
+    if agent_user:
+        agent_user.record_workspace_membership(workspace, role="agent")
     db.session.commit()
     flash("Workspace created.", "success")
     return redirect(url_for("admin.index"))
@@ -391,6 +432,7 @@ def assign_workspace_agent(workspace_id):
         existing.agent_id = None
 
     workspace.agent_id = agent_user.id
+    agent_user.record_workspace_membership(workspace, role="agent")
     db.session.commit()
     flash("Workspace agent updated.", "success")
     return redirect(url_for("admin.index"))

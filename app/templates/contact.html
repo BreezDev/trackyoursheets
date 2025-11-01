@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block title %}Contact TrackYourSheets{% endblock %}
+{% block content %}
+<div class="row justify-content-center align-items-stretch g-4">
+  <div class="col-xl-6">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-body p-4 p-lg-5">
+        <span class="badge rounded-pill bg-primary-soft text-primary fw-semibold mb-3">We're here to help</span>
+        <h1 class="h3 mb-3">Talk with the TrackYourSheets team</h1>
+        <p class="text-muted">Our product specialists respond within one business day. Whether you're migrating statements, exploring pricing, or need a quick walkthrough, we're just a message away.</p>
+        <div class="d-flex flex-column gap-3 my-4">
+          <div class="d-flex gap-3 align-items-start">
+            <div class="icon-circle bg-primary-soft text-primary"><i class="bi bi-envelope-open"></i></div>
+            <div>
+              <h2 class="h6 mb-1">Email support</h2>
+              <p class="mb-0 text-muted">Send questions, billing updates, or onboarding requests to <a href="mailto:{{ support_email }}">{{ support_email }}</a>.</p>
+            </div>
+          </div>
+          <div class="d-flex gap-3 align-items-start">
+            <div class="icon-circle bg-success-soft text-success"><i class="bi bi-clock-history"></i></div>
+            <div>
+              <h2 class="h6 mb-1">Response hours</h2>
+              <p class="mb-0 text-muted">Monday–Friday, 8am–6pm ET with weekend coverage for production emergencies.</p>
+            </div>
+          </div>
+          <div class="d-flex gap-3 align-items-start">
+            <div class="icon-circle bg-info-soft text-info"><i class="bi bi-instagram"></i></div>
+            <div>
+              <h2 class="h6 mb-1">Follow @trackyoursheets</h2>
+              <p class="mb-0 text-muted">Daily automation tips and product updates live on <a href="https://www.instagram.com/trackyoursheets" target="_blank" rel="noopener">Instagram</a>.</p>
+            </div>
+          </div>
+        </div>
+        <a class="btn btn-primary btn-lg w-100" href="mailto:{{ support_email }}">Email {{ support_email }}</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-body p-4 d-flex flex-column">
+        <h2 class="h5 mb-3">Common questions</h2>
+        <ul class="list-unstyled small flex-grow-1">
+          <li class="mb-3"><strong>Need pricing clarity?</strong><br>Plans start at $19.99/mo for five users with $1/mo per extra teammate.</li>
+          <li class="mb-3"><strong>Want a guided tour?</strong><br>Email us and we'll schedule a personalised onboarding session for your agency.</li>
+          <li class="mb-0"><strong>Working with statements now?</strong><br>Attach a sample CSV and we'll blueprint your import mapping in the reply.</li>
+        </ul>
+        <a class="btn btn-outline-secondary mt-4" href="{{ url_for('main.landing') }}#pricing">Review pricing plans</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .icon-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+  }
+</style>
+{% endblock %}
