@@ -137,6 +137,72 @@
   </div>
 </div>
 
+<div class="row g-4 mt-1" id="security">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Security & notifications</h2>
+        <span class="badge bg-primary-soft text-primary">{{ two_factor_org_totals.enabled }}/{{ two_factor_org_totals.total }} protected</span>
+      </div>
+      <form method="post" action="{{ url_for('admin.update_security_preferences') }}" class="card-body">
+        <p class="text-muted small">Manage your personal login security and choose which operational emails you receive.</p>
+        <div class="mb-4">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" id="twoFactorSwitch" name="two_factor_enabled" value="1" {% if two_factor_enabled %}checked{% endif %}>
+            <label class="form-check-label fw-semibold" for="twoFactorSwitch">Require two-factor verification</label>
+          </div>
+          <div class="form-text">Two-factor protects sensitive payouts and billing actions.</div>
+        </div>
+        <div class="row">
+          <div class="col-md-6">
+            <h3 class="h6">Email alerts</h3>
+            <p class="text-muted small mb-2">Toggle the alerts you want to receive.</p>
+          </div>
+          <div class="col-md-6 text-md-end">
+            <span class="text-muted small">Defaults follow your organization settings.</span>
+          </div>
+        </div>
+        <div class="row row-cols-1 row-cols-sm-2 g-3">
+          {% for key, default_enabled in notification_options.items() %}
+          <div class="col">
+            <div class="border rounded p-3 h-100">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="notif-{{ key }}" name="notifications" value="{{ key }}" {% if user_notifications.get(key, default_enabled) %}checked{% endif %}>
+                <label class="form-check-label fw-semibold" for="notif-{{ key }}">{{ notification_labels.get(key, key.replace('_', ' ')|title) }}</label>
+              </div>
+              <div class="text-muted small">
+                {% set adoption = notification_rollups | selectattr('key', 'equalto', key) | list %}
+                {% if adoption and adoption[0].total %}
+                  {{ adoption[0].enabled }} of {{ adoption[0].total }} teammates opted in.
+                {% else %}
+                  Default setting: {{ 'On' if default_enabled else 'Off' }}
+                {% endif %}
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="d-flex justify-content-between align-items-center mt-4">
+          <span class="text-muted small">Changes apply immediately to future alerts.</span>
+          <button type="submit" class="btn btn-primary btn-sm">Save preferences</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Knowledge base</h2>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.how_to') }}">Open guide</a>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">Step-by-step instructions for agents, producers, bookkeepers, auditors, admins, and read-only teammates are embedded directly in the app.</p>
+        <p class="text-muted small mb-0">Bookmark the guide so new hires can onboard themselves in minutes.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="row g-4 mt-1">
   <div class="col-xl-6">
     <div class="card shadow-sm h-100">
@@ -188,12 +254,16 @@
   <div class="col-xl-6">
     <div class="card shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
-        <h2 class="h6 mb-0">Knowledge base</h2>
-        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.how_to') }}">Open guide</a>
+        <h2 class="h6 mb-0">HR portal</h2>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('hr.dashboard') }}">Open portal</a>
       </div>
       <div class="card-body">
-        <p class="text-muted small mb-2">Step-by-step instructions for agents, producers, bookkeepers, auditors, admins, and read-only teammates are embedded directly in the app.</p>
-        <p class="text-muted small mb-0">Bookmark the guide so new hires can onboard themselves in minutes.</p>
+        <p class="text-muted small mb-2">Centralise onboarding, policy resources, and employee insights without leaving TrackYourSheets.</p>
+        <ul class="text-muted small ps-3 mb-0">
+          <li>Track onboarding progress and anniversaries</li>
+          <li>Share benefits &amp; policies in one place</li>
+          <li>Search the employee directory with filters</li>
+        </ul>
       </div>
     </div>
   </div>

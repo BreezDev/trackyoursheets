@@ -40,11 +40,23 @@ from .models import (
 )
 from .workspaces import get_accessible_workspaces, get_accessible_workspace_ids
 from .resend_email import send_workspace_invitation
-from .guides import get_role_guides
+from .guides import get_role_guides, get_interactive_tour
 from .marketing import build_plan_details
+from .models import DEFAULT_NOTIFICATION_PREFERENCES
 
 
 admin_bp = Blueprint("admin", __name__)
+
+
+NOTIFICATION_LABELS = {
+    "signup": "New signup alerts",
+    "login": "Login alerts",
+    "workspace_invite": "Workspace invitations",
+    "plan_updates": "Plan and billing updates",
+    "workspace_updates": "Workspace membership updates",
+    "new_entries": "New import entries",
+    "general_updates": "Product news",
+}
 
 
 def require_admin():
@@ -175,6 +187,32 @@ def index():
                     "invite_disabled_reason"
                 ] = f"{org.plan.name} includes up to {seat_limit} seats. Upgrade to add more teammates."
 
+    total_users = len(users)
+    notification_options = dict(DEFAULT_NOTIFICATION_PREFERENCES)
+    current_preferences = (
+        current_user.notification_preferences or notification_options
+    )
+    notification_rollups = []
+    if total_users:
+        for key, default_enabled in notification_options.items():
+            enabled_count = sum(1 for member in users if member.wants_notification(key))
+            notification_rollups.append(
+                {
+                    "key": key,
+                    "label": NOTIFICATION_LABELS.get(
+                        key, key.replace("_", " ").title()
+                    ),
+                    "enabled": enabled_count,
+                    "total": total_users,
+                    "default_enabled": default_enabled,
+                }
+            )
+
+    two_factor_org_totals = {
+        "enabled": sum(1 for member in users if member.two_factor_enabled),
+        "total": total_users,
+    }
+
     return render_template(
         "admin/index.html",
         org=org,
@@ -199,6 +237,12 @@ def index():
         extra_seat_price=extra_seat_price,
         carrier_usage=carrier_usage,
         producer_usage=producer_usage,
+        notification_options=notification_options,
+        notification_labels=NOTIFICATION_LABELS,
+        user_notifications=current_preferences,
+        two_factor_enabled=current_user.two_factor_enabled,
+        notification_rollups=notification_rollups,
+        two_factor_org_totals=two_factor_org_totals,
     )
 
 
@@ -983,11 +1027,26 @@ def delete_category(category_id: int):
 @admin_bp.route("/how-to")
 def how_to():
     sections = get_role_guides()
+    tour_steps = get_interactive_tour()
     return render_template(
         "guide.html",
         sections=sections,
         back_to=url_for("admin.index"),
+        tour_steps=tour_steps,
     )
+
+
+@admin_bp.route("/security", methods=["POST"])
+def update_security_preferences():
+    selected = request.form.getlist("notifications")
+    two_factor_enabled = bool(request.form.get("two_factor_enabled"))
+    current_user.set_notification_preferences(selected)
+    current_user.two_factor_enabled = two_factor_enabled
+    if not two_factor_enabled:
+        current_user.clear_two_factor_challenge()
+    db.session.commit()
+    flash("Security preferences updated.", "success")
+    return redirect(url_for("admin.index") + "#security")
 
 
 def _get_category_names(org_id: int):

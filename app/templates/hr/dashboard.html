@@ -1,0 +1,157 @@
+{% extends 'base.html' %}
+{% block title %}HR Portal · TrackYourSheets{% endblock %}
+{% block content %}
+{% set active_tab = 'overview' %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">HR portal</h1>
+    <p class="text-muted mb-0">Monitor headcount, onboarding progress, and key anniversaries without leaving TrackYourSheets.</p>
+  </div>
+  <div class="mt-3 mt-lg-0 text-lg-end">
+    <div class="badge bg-primary-soft text-primary">{{ org.name }}</div>
+  </div>
+</div>
+
+{% include 'hr/_subnav.html' %}
+
+<div class="row g-4">
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">Active headcount</div>
+        <div class="display-6 fw-bold">{{ active_count }}</div>
+        <div class="text-muted small">{{ total_employees }} total teammates</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">Pending onboarding</div>
+        <div class="display-6 fw-bold">{{ pending_count }}</div>
+        <div class="text-muted small">Invites outstanding or awaiting activation</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">Two-factor adoption</div>
+        <div class="display-6 fw-bold">{{ adoption_pct }}%</div>
+        <div class="text-muted small">{{ two_factor_enabled }} teammates protected</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-3 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">Roles</div>
+        <ul class="list-unstyled mb-0 small text-muted">
+          {% for role, count in role_breakdown.items()|list|sort %}
+          <li><span class="fw-semibold text-dark">{{ role|capitalize }}</span> — {{ count }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Recent hires</h2>
+        <span class="badge bg-primary-soft text-primary">Last 45 days</span>
+      </div>
+      <div class="card-body">
+        {% if recent_hires %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">Teammate</th>
+                <th scope="col">Role</th>
+                <th scope="col">Status</th>
+                <th scope="col">Joined</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for user in recent_hires %}
+              <tr>
+                <td class="fw-semibold">{{ user.display_name_for_ui }}</td>
+                <td class="text-muted small">{{ user.role|capitalize }}</td>
+                <td><span class="badge {{ 'bg-success-soft text-success' if user.status == 'active' else 'bg-warning-soft text-warning' }}">{{ user.status|capitalize }}</span></td>
+                <td class="text-muted small">{{ user.created_at.strftime('%b %d, %Y') if user.created_at else '—' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">No new teammates in the last 45 days.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Upcoming anniversaries</h2>
+        <span class="badge bg-secondary-soft text-secondary">Next 90 days</span>
+      </div>
+      <div class="card-body">
+        {% if upcoming_anniversaries %}
+        <ul class="list-group list-group-flush">
+          {% for entry in upcoming_anniversaries %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <div class="fw-semibold">{{ entry.user.display_name_for_ui }}</div>
+              <div class="text-muted small">{{ entry.user.role|capitalize }} · Joined {{ entry.user.created_at.strftime('%b %d, %Y') if entry.user.created_at else '—' }}</div>
+            </div>
+            <span class="badge bg-primary-soft text-primary">{{ entry.anniversary.strftime('%b %d') }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted small mb-0">No anniversaries in the next quarter.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">Workspace coverage</h2>
+    <span class="text-muted small">Ensure every workspace has an agent and active members.</span>
+  </div>
+  <div class="card-body">
+    {% if workspace_summary %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Workspace</th>
+            <th scope="col">Office</th>
+            <th scope="col">Agent</th>
+            <th scope="col">Members</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for workspace in workspace_summary %}
+          <tr>
+            <td class="fw-semibold">{{ workspace.name }}</td>
+            <td class="text-muted small">{{ workspace.office or '—' }}</td>
+            <td class="text-muted small">{{ workspace.agent or 'Unassigned' }}</td>
+            <td><span class="badge {{ 'bg-success-soft text-success' if workspace.members else 'bg-warning-soft text-warning' }}">{{ workspace.members }} member{{ '' if workspace.members == 1 else 's' }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">No workspaces found yet. Create one from the admin console.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
