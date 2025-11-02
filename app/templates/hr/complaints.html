@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% block title %}HR Reports · TrackYourSheets{% endblock %}
+{% block content %}
+{% set active_tab = 'complaints' %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">HR reports & escalations</h1>
+    <p class="text-muted mb-0">Track every complaint, audit follow-ups, and document resolutions with full accountability.</p>
+  </div>
+  <div class="mt-3 mt-lg-0">
+    <a class="btn btn-primary" href="{{ url_for('hr.submit_complaint') }}">Submit on behalf of teammate</a>
+  </div>
+</div>
+
+{% include 'hr/_subnav.html' %}
+
+<div class="row g-4 mb-4">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">Status breakdown</div>
+        <ul class="list-group list-group-flush">
+          {% for status in status_choices %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <span class="text-uppercase small text-muted">{{ status.replace('_', ' ') }}</span>
+            <span class="badge bg-primary-soft text-primary">{{ status_breakdown.get(status, 0) }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">Priority distribution</div>
+        <ul class="list-group list-group-flush">
+          {% for priority in priority_choices %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <span class="text-uppercase small text-muted">{{ priority }}</span>
+            <span class="badge {{ 'bg-danger-soft text-danger' if priority in ['high', 'urgent'] else 'bg-secondary-soft text-secondary' }}">{{ priority_breakdown.get(priority, 0) }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">All reports</h2>
+    <span class="text-muted small">{{ complaints|length }} record{{ '' if complaints|length == 1 else 's' }}</span>
+  </div>
+  <div class="card-body">
+    {% if complaints %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Subject</th>
+            <th scope="col">Priority</th>
+            <th scope="col">Status</th>
+            <th scope="col">Reporter</th>
+            <th scope="col">Assigned</th>
+            <th scope="col">Updated</th>
+            <th scope="col" class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for complaint in complaints %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ complaint.subject }}</div>
+              <div class="text-muted small">Filed {{ complaint.created_at.strftime('%b %d, %Y %I:%M %p') if complaint.created_at else '—' }}</div>
+            </td>
+            <td><span class="badge {{ 'bg-danger-soft text-danger' if complaint.priority in ['high', 'urgent'] else 'bg-secondary-soft text-secondary' }} text-uppercase">{{ complaint.priority }}</span></td>
+            <td><span class="badge {{ 'bg-success-soft text-success' if complaint.status == 'resolved' else 'bg-warning-soft text-warning' }} text-uppercase">{{ complaint.status.replace('_', ' ') }}</span></td>
+            <td class="text-muted small">{{ complaint.reporter.display_name_for_ui }}</td>
+            <td class="text-muted small">{{ complaint.assignee.display_name_for_ui if complaint.assignee else 'Unassigned' }}</td>
+            <td class="text-muted small">{{ complaint.updated_at.strftime('%b %d, %Y %I:%M %p') if complaint.updated_at else '—' }}</td>
+            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('hr.complaint_detail', complaint_id=complaint.id) }}">Review</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted mb-0">No complaints submitted yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

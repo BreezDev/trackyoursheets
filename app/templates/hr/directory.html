@@ -60,11 +60,13 @@
         <thead class="table-light">
           <tr>
             <th scope="col">Teammate</th>
+            <th scope="col">Title</th>
             <th scope="col">Role</th>
             <th scope="col">Status</th>
             <th scope="col">Offices</th>
             <th scope="col">Workspaces</th>
             <th scope="col">Last login</th>
+            <th scope="col" class="text-end">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -73,7 +75,14 @@
             <td>
               <div class="fw-semibold">{{ user.display_name_for_ui }}</div>
               <div class="small text-muted">{{ user.email }}</div>
+              {% if user.full_name %}
+              <div class="small text-muted">Legal name: {{ user.full_name }}</div>
+              {% endif %}
+              {% if user.phone_number %}
+              <div class="small text-muted">{{ user.phone_number }}</div>
+              {% endif %}
             </td>
+            <td class="text-muted small">{{ user.job_title or '—' }}</td>
             <td class="text-muted small">{{ user.role|capitalize }}</td>
             <td>
               <span class="badge {{ 'bg-success-soft text-success' if user.status == 'active' else 'bg-warning-soft text-warning' }}">{{ user.status|capitalize }}</span>
@@ -81,6 +90,9 @@
             <td class="text-muted small">{{ office_names(user)|join(', ') or '—' }}</td>
             <td class="text-muted small">{{ workspace_names(user)|join(', ') or '—' }}</td>
             <td class="text-muted small">{{ user.last_login.strftime('%b %d, %Y') if user.last_login else '—' }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('hr.manage_employee', user_id=user.id) }}">Manage</a>
+            </td>
           </tr>
           {% endfor %}
         </tbody>

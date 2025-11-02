@@ -57,6 +57,72 @@
 </div>
 
 <div class="row g-4 mt-1">
+  <div class="col-xl-4 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">Document acknowledgements</div>
+        <div class="d-flex justify-content-between align-items-baseline mb-2">
+          <div class="display-6 fw-bold">{{ acknowledgement_total }}</div>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('hr.documents') }}">Manage library</a>
+        </div>
+        <ul class="list-unstyled small mb-0 text-muted">
+          {% if document_totals %}
+          {% for key, total in document_totals.items()|list|sort %}
+          <li><span class="fw-semibold text-dark">{{ document_category_label(key) }}</span> — {{ total }} document{{ '' if total == 1 else 's' }}</li>
+          {% endfor %}
+          {% else %}
+          <li>No internal documents published yet.</li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">HR reports &amp; issues</div>
+        <div class="display-6 fw-bold">{{ complaint_counts.get('open', 0) + complaint_counts.get('in_progress', 0) }}</div>
+        <div class="text-muted small">Active follow-ups</div>
+        <hr>
+        <div class="small text-muted">
+          {% for status in ['open', 'in_progress', 'waiting', 'resolved'] %}
+          <div class="d-flex justify-content-between">
+            <span class="text-uppercase">{{ status.replace('_', ' ') }}</span>
+            <span class="fw-semibold text-dark">{{ complaint_counts.get(status, 0) }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        <a class="btn btn-sm btn-outline-secondary mt-3" href="{{ url_for('hr.complaints') }}">Review reports</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small mb-2">Recent payroll runs</div>
+        {% if recent_payroll_runs %}
+        <div class="table-responsive">
+          <table class="table table-sm table-borderless align-middle mb-0">
+            <tbody>
+              {% for run in recent_payroll_runs %}
+              <tr>
+                <td class="small text-muted">{{ run.period_start.strftime('%b %d') }} – {{ run.period_end.strftime('%b %d') }}</td>
+                <td class="fw-semibold">${{ '{:,.2f}'.format(run.total_payout or 0) }}</td>
+                <td><span class="badge {{ 'bg-success-soft text-success' if run.status == 'processed' else 'bg-secondary-soft text-secondary' }}">{{ run.status.replace('_', ' ')|capitalize }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">No payroll runs have been generated yet.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 mt-1">
   <div class="col-xl-6">
     <div class="card shadow-sm h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
@@ -151,6 +217,32 @@
     </div>
     {% else %}
     <p class="text-muted small mb-0">No workspaces found yet. Create one from the admin console.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">Urgent HR queue</h2>
+    <a class="small" href="{{ url_for('hr.complaints') }}">View all reports</a>
+  </div>
+  <div class="card-body">
+    {% if urgent_queue %}
+    <ul class="list-group list-group-flush">
+      {% for complaint in urgent_queue[:5] %}
+      <li class="list-group-item">
+        <div class="d-flex justify-content-between">
+          <div>
+            <div class="fw-semibold">{{ complaint.subject }}</div>
+            <div class="text-muted small">Filed {{ complaint.created_at.strftime('%b %d, %Y') if complaint.created_at else 'recently' }} by {{ complaint.reporter.display_name_for_ui }}</div>
+          </div>
+          <span class="badge bg-danger-soft text-danger text-uppercase">{{ complaint.priority }}</span>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted small mb-0">No urgent items. Encourage teammates to submit reports from the HR support link when needed.</p>
     {% endif %}
   </div>
 </div>

@@ -12,5 +12,11 @@
     <li class="nav-item">
       <a class="nav-link {% if active_tab == 'policies' %}active{% endif %}" href="{{ url_for('hr.policies') }}">Policies &amp; benefits</a>
     </li>
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'documents' %}active{% endif %}" href="{{ url_for('hr.documents') }}">Documents</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'complaints' %}active{% endif %}" href="{{ url_for('hr.complaints') }}">HR reports</a>
+    </li>
   </ul>
 </div>

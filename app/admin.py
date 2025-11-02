@@ -3,12 +3,13 @@ load_dotenv()
 import hashlib
 import io
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from flask import (
     Blueprint,
     abort,
+    current_app,
     flash,
     redirect,
     render_template,
@@ -22,6 +23,7 @@ from flask_login import current_user, login_required
 from . import db
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from .models import (
     APIKey,
@@ -33,6 +35,8 @@ from .models import (
     CategoryTag,
     Office,
     Organization,
+    PayrollEntry,
+    PayrollRun,
     Producer,
     SubscriptionPlan,
     User,
@@ -1022,6 +1026,203 @@ def delete_category(category_id: int):
     db.session.commit()
     flash("Category removed.", "info")
     return redirect(url_for("admin.manage_categories"))
+
+
+@admin_bp.route("/payroll", methods=["GET", "POST"])
+def payroll_dashboard():
+    if not require_admin():
+        return redirect(url_for("admin.index"))
+
+    org = Organization.query.get_or_404(current_user.org_id)
+    today = datetime.utcnow().date()
+    default_start = today - timedelta(days=14)
+    default_end = today
+
+    def _parse_date(value: str | None, fallback):
+        if not value:
+            return fallback
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return fallback
+
+    date_from = _parse_date(request.values.get("date_from"), default_start)
+    date_to = _parse_date(request.values.get("date_to"), default_end)
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    txn_query = CommissionTransaction.query.filter_by(org_id=current_user.org_id)
+    txn_query = txn_query.filter(
+        CommissionTransaction.txn_date >= date_from,
+        CommissionTransaction.txn_date <= date_to,
+    )
+
+    status_rows = (
+        txn_query.with_entities(
+            CommissionTransaction.status.label("status"),
+            func.count(CommissionTransaction.id).label("count"),
+            func.coalesce(func.sum(CommissionTransaction.amount), 0).label("amount"),
+        )
+        .group_by(CommissionTransaction.status)
+        .all()
+    )
+    status_summary = [
+        {
+            "status": row.status or "unspecified",
+            "count": row.count,
+            "amount": Decimal(row.amount or 0),
+        }
+        for row in status_rows
+    ]
+
+    payroll_rows_raw = (
+        txn_query.join(Producer, CommissionTransaction.producer_id == Producer.id, isouter=True)
+        .join(User, Producer.user_id == User.id, isouter=True)
+        .with_entities(
+            CommissionTransaction.producer_id.label("producer_id"),
+            Producer.display_name.label("producer_name"),
+            User.id.label("user_id"),
+            func.coalesce(func.sum(CommissionTransaction.amount), 0).label("commission_total"),
+            func.count(CommissionTransaction.id).label("transaction_count"),
+        )
+        .group_by(
+            CommissionTransaction.producer_id,
+            Producer.display_name,
+            User.id,
+        )
+        .all()
+    )
+
+    payroll_rows = []
+    total_commission = Decimal("0")
+    for row in payroll_rows_raw:
+        amount = Decimal(row.commission_total or 0)
+        payroll_rows.append(
+            {
+                "producer_id": row.producer_id,
+                "producer_name": row.producer_name or "Unassigned",
+                "user_id": row.user_id,
+                "transaction_count": row.transaction_count,
+                "commission_total": amount,
+                "average_amount": (amount / row.transaction_count) if row.transaction_count else Decimal("0"),
+            }
+        )
+        total_commission += amount
+
+    payroll_rows.sort(key=lambda item: item["producer_name"].lower())
+
+    recent_transactions = (
+        txn_query.options(
+            joinedload(CommissionTransaction.producer),
+            joinedload(CommissionTransaction.workspace),
+        )
+        .order_by(CommissionTransaction.txn_date.desc(), CommissionTransaction.id.desc())
+        .limit(10)
+        .all()
+    )
+
+    previous_runs = (
+        PayrollRun.query.filter_by(org_id=current_user.org_id)
+        .order_by(PayrollRun.created_at.desc())
+        .limit(5)
+        .all()
+    )
+
+    stripe_gateway = current_app.extensions.get("stripe_gateway")
+    stripe_ready = bool(stripe_gateway and stripe_gateway.is_configured)
+
+    if request.method == "POST":
+        if not payroll_rows:
+            flash("No commission transactions found for the selected period.", "warning")
+        else:
+            run = PayrollRun(
+                org_id=current_user.org_id,
+                period_start=date_from,
+                period_end=date_to,
+                total_commission=total_commission,
+                total_adjustments=Decimal("0"),
+                total_payout=total_commission,
+                status="pending_payout",
+                created_by_id=current_user.id,
+                processing_notes=request.form.get("notes") or None,
+            )
+            db.session.add(run)
+            db.session.flush()
+            for row in payroll_rows:
+                entry = PayrollEntry(
+                    org_id=current_user.org_id,
+                    payroll_run_id=run.id,
+                    producer_id=row["producer_id"],
+                    user_id=row["user_id"],
+                    producer_snapshot=row["producer_name"],
+                    commission_total=row["commission_total"],
+                    adjustments=Decimal("0"),
+                    payout_amount=row["commission_total"],
+                    notes=f"Auto-generated from commissions {date_from.isoformat()} – {date_to.isoformat()}",
+                )
+                db.session.add(entry)
+
+            payout_message = None
+            if stripe_ready and total_commission > 0:
+                try:
+                    payout = stripe_gateway.create_commission_payout(
+                        organization=org,
+                        amount=total_commission,
+                        memo=f"Commission payroll {date_from.isoformat()} – {date_to.isoformat()}",
+                        metadata={"payroll_run_id": run.id},
+                    )
+                except Exception as exc:  # pragma: no cover - Stripe failure path
+                    payout = None
+                    run.processing_notes = f"Stripe payout error: {exc}"
+                    current_app.logger.exception(
+                        "Stripe payout error",
+                        extra={"payroll_run_id": run.id},
+                    )
+                else:
+                    if payout:
+                        run.stripe_payout_id = payout.get("id")
+                        run.stripe_payout_status = payout.get("status")
+                        if payout.get("status") in {"paid", "succeeded"}:
+                            run.status = "processed"
+                            run.processed_at = datetime.utcnow()
+                        else:
+                            run.status = "processing"
+                        payout_message = payout.get("message")
+            else:
+                run.processing_notes = (run.processing_notes or "") + " Stripe payout not attempted; gateway unavailable."
+
+            db.session.commit()
+            if run.stripe_payout_id:
+                flash(
+                    "Payroll run created and payout submitted to Stripe." + (f" {payout_message}" if payout_message else ""),
+                    "success",
+                )
+            else:
+                flash(
+                    "Payroll run created. Review the entries and send payouts manually when ready.",
+                    "info",
+                )
+            return redirect(
+                url_for(
+                    "admin.payroll_dashboard",
+                    date_from=date_from.isoformat(),
+                    date_to=date_to.isoformat(),
+                )
+            )
+
+    return render_template(
+        "admin/payroll.html",
+        org=org,
+        active_tab="payroll",
+        date_from=date_from,
+        date_to=date_to,
+        payroll_rows=payroll_rows,
+        total_commission=total_commission,
+        status_summary=status_summary,
+        recent_transactions=recent_transactions,
+        previous_runs=previous_runs,
+        stripe_ready=stripe_ready,
+    )
 
 
 @admin_bp.route("/how-to")

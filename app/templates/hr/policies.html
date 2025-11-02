@@ -41,6 +41,45 @@
 </div>
 
 <div class="card shadow-sm mt-4">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">Your agency documents</h2>
+    <a class="btn btn-sm btn-primary" href="{{ url_for('hr.create_document') }}">Add document</a>
+  </div>
+  <div class="card-body">
+    {% if documents_by_category %}
+    <div class="row g-3">
+      {% for key, docs in documents_by_category.items()|list|sort %}
+      <div class="col-lg-4">
+        <h3 class="h6 text-uppercase text-muted">{{ document_category_label(key) }}</h3>
+        <ul class="list-group list-group-flush mb-3">
+          {% for document in docs %}
+          <li class="list-group-item">
+            <div class="fw-semibold">{{ document.title }}</div>
+            {% if document.summary %}
+            <div class="text-muted small mb-1">{{ document.summary }}</div>
+            {% endif %}
+            <div class="d-flex flex-wrap gap-2 small">
+              {% if document.link_url %}
+              <a class="btn btn-sm btn-outline-primary" href="{{ document.link_url }}" target="_blank" rel="noopener">Open link</a>
+              {% endif %}
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('hr.edit_document', doc_id=document.id) }}">Manage</a>
+              {% if document.requires_acknowledgement %}
+              <span class="badge bg-success-soft text-success">Ack required</span>
+              {% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted mb-0">No internal documents uploaded yet. Use the button above to add policies, payroll guides, or onboarding checklists.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4">
   <div class="card-body">
     <h2 class="h5">How to use the HR portal</h2>
     <p class="text-muted">Share this portal with managers so they can self-serve onboarding checklists, download policy packs, and review workspace coverage before performance reviews.</p>

@@ -46,6 +46,9 @@ class Organization(TimestampMixin, db.Model):
     payout_statements = db.relationship("PayoutStatement", backref="organization", lazy=True)
     categories = db.relationship("CategoryTag", backref="organization", lazy=True)
     subscriptions = db.relationship("Subscription", backref="organization", lazy=True)
+    hr_documents = db.relationship("HRDocument", backref="organization", lazy=True)
+    hr_complaints = db.relationship("HRComplaint", backref="organization", lazy=True)
+    payroll_runs = db.relationship("PayrollRun", backref="organization", lazy=True)
 
 
 class SubscriptionPlan(db.Model):
@@ -138,6 +141,12 @@ class User(UserMixin, TimestampMixin, db.Model):
     role = db.Column(db.String(32), nullable=False, default="producer")
     status = db.Column(db.String(32), nullable=False, default="active")
     must_change_password = db.Column(db.Boolean, nullable=False, default=False)
+    first_name = db.Column(db.String(120))
+    last_name = db.Column(db.String(120))
+    preferred_name = db.Column(db.String(120))
+    job_title = db.Column(db.String(120))
+    phone_number = db.Column(db.String(64))
+    emergency_contact = db.Column(db.JSON)
     last_login = db.Column(db.DateTime)
     notification_preferences = db.Column(
         db.JSON, default=lambda: dict(DEFAULT_NOTIFICATION_PREFERENCES)
@@ -174,9 +183,20 @@ class User(UserMixin, TimestampMixin, db.Model):
 
     @property
     def display_name_for_ui(self) -> str:
+        if self.preferred_name:
+            return self.preferred_name
         if getattr(self, "producer", None) and self.producer and self.producer.display_name:
             return self.producer.display_name
         return self.email
+
+    @property
+    def full_name(self) -> str | None:
+        parts = [name for name in [self.first_name, self.last_name] if name]
+        if parts:
+            return " ".join(parts)
+        if self.preferred_name:
+            return self.preferred_name
+        return None
 
     def wants_notification(self, category: str) -> bool:
         prefs = self.notification_preferences or {}
@@ -599,3 +619,107 @@ class WorkspaceChatMessage(TimestampMixin, db.Model):
 
     workspace = db.relationship("Workspace", backref="chat_messages", foreign_keys=[workspace_id])
     author = db.relationship("User", backref="chat_messages", foreign_keys=[author_id])
+
+
+class HRDocument(TimestampMixin, db.Model):
+    __tablename__ = "hr_documents"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    title = db.Column(db.String(180), nullable=False)
+    category = db.Column(db.String(64), nullable=False, default="policy")
+    version = db.Column(db.String(32))
+    summary = db.Column(db.Text)
+    link_url = db.Column(db.String(500))
+    content = db.Column(db.Text)
+    requires_acknowledgement = db.Column(db.Boolean, default=False)
+    published_at = db.Column(db.DateTime)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+
+    creator = db.relationship("User", backref="hr_documents_created", foreign_keys=[created_by_id])
+    acknowledgements = db.relationship(
+        "HRDocumentAcknowledgement",
+        backref="document",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+
+
+class HRDocumentAcknowledgement(TimestampMixin, db.Model):
+    __tablename__ = "hr_document_acknowledgements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    document_id = db.Column(db.Integer, db.ForeignKey("hr_documents.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    acknowledged_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship("User", backref="hr_document_acknowledgements", foreign_keys=[user_id])
+
+    __table_args__ = (
+        db.UniqueConstraint("org_id", "document_id", "user_id", name="uq_document_ack_user"),
+    )
+
+
+class HRComplaint(TimestampMixin, db.Model):
+    __tablename__ = "hr_complaints"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    reporter_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    assigned_to_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    subject = db.Column(db.String(180), nullable=False)
+    category = db.Column(db.String(64), nullable=False, default="general")
+    description = db.Column(db.Text, nullable=False)
+    priority = db.Column(db.String(32), nullable=False, default="normal")
+    status = db.Column(db.String(32), nullable=False, default="open")
+    resolution_notes = db.Column(db.Text)
+    resolved_at = db.Column(db.DateTime)
+
+    reporter = db.relationship("User", foreign_keys=[reporter_id], backref="hr_complaints_reported")
+    assignee = db.relationship("User", foreign_keys=[assigned_to_id], backref="hr_complaints_assigned")
+
+
+class PayrollRun(TimestampMixin, db.Model):
+    __tablename__ = "payroll_runs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    period_start = db.Column(db.Date, nullable=False)
+    period_end = db.Column(db.Date, nullable=False)
+    total_commission = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+    total_adjustments = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+    total_payout = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+    status = db.Column(db.String(32), nullable=False, default="draft")
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    processed_at = db.Column(db.DateTime)
+    stripe_payout_id = db.Column(db.String(120))
+    stripe_payout_status = db.Column(db.String(64))
+    processing_notes = db.Column(db.Text)
+
+    creator = db.relationship("User", backref="payroll_runs_created", foreign_keys=[created_by_id])
+    entries = db.relationship(
+        "PayrollEntry",
+        backref="payroll_run",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+
+
+class PayrollEntry(TimestampMixin, db.Model):
+    __tablename__ = "payroll_entries"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    payroll_run_id = db.Column(db.Integer, db.ForeignKey("payroll_runs.id"), nullable=False)
+    producer_id = db.Column(db.Integer, db.ForeignKey("producers.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    producer_snapshot = db.Column(db.String(180))
+    commission_total = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+    adjustments = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+    payout_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0)
+    notes = db.Column(db.Text)
+    stripe_transfer_id = db.Column(db.String(120))
+
+    producer = db.relationship("Producer", backref="payroll_entries", foreign_keys=[producer_id])
+    user = db.relationship("User", backref="payroll_entries", foreign_keys=[user_id])

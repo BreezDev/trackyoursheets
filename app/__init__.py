@@ -192,6 +192,30 @@ def _ensure_schema_extensions() -> None:
             migrations.append(
                 "ALTER TABLE users ADD COLUMN two_factor_expires_at DATETIME"
             )
+        if "first_name" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN first_name VARCHAR(120)"
+            )
+        if "last_name" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN last_name VARCHAR(120)"
+            )
+        if "preferred_name" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN preferred_name VARCHAR(120)"
+            )
+        if "job_title" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN job_title VARCHAR(120)"
+            )
+        if "phone_number" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN phone_number VARCHAR(64)"
+            )
+        if "emergency_contact" not in columns:
+            migrations.append(
+                "ALTER TABLE users ADD COLUMN emergency_contact TEXT"
+            )
 
         if migrations:
             with db.engine.begin() as conn:

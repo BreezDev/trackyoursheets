@@ -206,6 +206,49 @@ class StripeGateway:
         )
         return session.url
 
+    def create_commission_payout(
+        self,
+        *,
+        organization: Organization,
+        amount: Decimal | float | int,
+        memo: str | None = None,
+        metadata: Optional[Dict[str, object]] = None,
+    ) -> Optional[Dict[str, object]]:
+        if not self.secret_key:
+            raise RuntimeError("Stripe gateway is not configured")
+        try:
+            amount_decimal = Decimal(amount)
+        except (InvalidOperation, TypeError):
+            raise ValueError("Amount must be numeric")
+        cents = int(amount_decimal.quantize(Decimal("0.01")) * 100)
+        if cents <= 0:
+            return None
+        stripe.api_key = self.secret_key
+        payload_metadata = {"org_id": organization.id}
+        if metadata:
+            payload_metadata.update(metadata)
+        try:
+            payout = stripe.Payout.create(
+                amount=cents,
+                currency="usd",
+                description=memo or "Commission payroll",
+                metadata=payload_metadata,
+                statement_descriptor="Commissions",
+            )
+        except Exception as exc:  # pragma: no cover - external API branch
+            logger = getattr(current_app, "logger", None)
+            if logger:
+                logger.exception(
+                    "Failed to create Stripe payout",
+                    extra={"org_id": organization.id, "amount": cents},
+                )
+            raise
+        return {
+            "id": getattr(payout, "id", None),
+            "status": getattr(payout, "status", None),
+            "message": f"Expected arrival {getattr(payout, 'arrival_date', None)}" if getattr(payout, "arrival_date", None) else None,
+        }
+
 
 def _resolve_price_id(mode: str, plan_code: str) -> Optional[str]:
     candidates = []
