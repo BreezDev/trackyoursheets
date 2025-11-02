@@ -108,6 +108,7 @@ def create_app(test_config=None):
     from .main import main_bp
     from .admin import admin_bp
     from .imports import imports_bp
+    from .hr import hr_bp
     from .reports import reports_bp
     from .stripe_integration import init_stripe
 
@@ -115,6 +116,7 @@ def create_app(test_config=None):
     app.register_blueprint(main_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(imports_bp, url_prefix="/imports")
+    app.register_blueprint(hr_bp, url_prefix="/hr")
     app.register_blueprint(reports_bp, url_prefix="/reports")
 
     init_stripe(app)

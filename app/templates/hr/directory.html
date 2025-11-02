@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+{% block title %}HR Directory · TrackYourSheets{% endblock %}
+{% block content %}
+{% set active_tab = 'directory' %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Employee directory</h1>
+    <p class="text-muted mb-0">Search every teammate, filter by office or status, and jump into workspace assignments.</p>
+  </div>
+</div>
+
+{% include 'hr/_subnav.html' %}
+
+<form class="row g-3 align-items-end mb-4" method="get">
+  <div class="col-md-4">
+    <label class="form-label" for="directory-search">Search</label>
+    <input type="search" id="directory-search" name="q" class="form-control" placeholder="Name, email, office, workspace" value="{{ filters.query }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label" for="directory-role">Role</label>
+    <select id="directory-role" name="role" class="form-select">
+      <option value="">All roles</option>
+      {% for role in available_roles %}
+      <option value="{{ role }}" {% if filters.role == role %}selected{% endif %}>{{ role|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label" for="directory-status">Status</label>
+    <select id="directory-status" name="status" class="form-select">
+      <option value="">All statuses</option>
+      {% for status in available_statuses %}
+      <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label" for="directory-office">Office</label>
+    <select id="directory-office" name="office" class="form-select">
+      <option value="">All offices</option>
+      {% for office in offices %}
+      <option value="{{ office.id }}" {% if filters.office|int == office.id %}selected{% endif %}>{{ office.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2 d-grid">
+    <button type="submit" class="btn btn-primary">Apply filters</button>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <h2 class="h6 mb-0">Directory</h2>
+    <span class="text-muted small">{{ employees|length }} result{{ '' if employees|length == 1 else 's' }}</span>
+  </div>
+  <div class="card-body">
+    {% if employees %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Teammate</th>
+            <th scope="col">Role</th>
+            <th scope="col">Status</th>
+            <th scope="col">Offices</th>
+            <th scope="col">Workspaces</th>
+            <th scope="col">Last login</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in employees %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ user.display_name_for_ui }}</div>
+              <div class="small text-muted">{{ user.email }}</div>
+            </td>
+            <td class="text-muted small">{{ user.role|capitalize }}</td>
+            <td>
+              <span class="badge {{ 'bg-success-soft text-success' if user.status == 'active' else 'bg-warning-soft text-warning' }}">{{ user.status|capitalize }}</span>
+            </td>
+            <td class="text-muted small">{{ office_names(user)|join(', ') or '—' }}</td>
+            <td class="text-muted small">{{ workspace_names(user)|join(', ') or '—' }}</td>
+            <td class="text-muted small">{{ user.last_login.strftime('%b %d, %Y') if user.last_login else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">No teammates match the current filters.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
