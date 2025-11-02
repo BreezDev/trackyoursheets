@@ -10,7 +10,7 @@
         <p class="text-muted">Your report “{{ complaint.subject }}” was sent to the HR team. They'll follow up at {{ current_user.email }} if they need more information.</p>
         <div class="d-flex justify-content-center gap-3 mt-4">
           <a class="btn btn-outline-primary" href="{{ url_for('main.dashboard') }}">Return to dashboard</a>
-          {% if current_user.role in ['owner', 'admin', 'agent', 'bookkeeper'] %}
+          {% if current_user.role in ['owner', 'admin', 'agent', 'bookkeeper', 'hr'] %}
           <a class="btn btn-primary" href="{{ url_for('hr.complaints') }}">Review HR queue</a>
           {% endif %}
         </div>

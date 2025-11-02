@@ -158,6 +158,41 @@
     </div>
   </section>
 
+  <section id="api" class="py-6 landing-section landing-section--muted">
+    <div class="container">
+      <div class="row justify-content-between align-items-center g-5">
+        <div class="col-lg-6">
+          <span class="badge rounded-pill bg-primary-soft text-primary fw-semibold">API &amp; integrations</span>
+          <h2 class="display-6 fw-bold mt-3">Build on TrackYourSheets with REST, GraphQL, and webhooks.</h2>
+          <p class="text-muted lead">Expose commission, payroll, HR, and analytics data securely. Our API guide walks through authentication, endpoints, rate limits, and how to launch a public portal at <strong>api.trackyoursheets.com</strong>.</p>
+          <ul class="list-unstyled d-grid gap-2 text-muted">
+            <li class="d-flex gap-2 align-items-start"><span class="text-primary"><i class="bi bi-cloud-check"></i></span><span>OAuth 2.1 client credentials with fine-grained scopes for workspaces, HR, and payroll.</span></li>
+            <li class="d-flex gap-2 align-items-start"><span class="text-primary"><i class="bi bi-diagram-3"></i></span><span>Unified REST and GraphQL models so engineering teams can choose their preferred style.</span></li>
+            <li class="d-flex gap-2 align-items-start"><span class="text-primary"><i class="bi bi-broadcast"></i></span><span>Webhook topics for payroll approvals, HR complaints, imports, and report exports.</span></li>
+            <li class="d-flex gap-2 align-items-start"><span class="text-primary"><i class="bi bi-gear"></i></span><span>Step-by-step hosting instructions, DNS guidance, and TLS tips for api.trackyoursheets.com.</span></li>
+          </ul>
+          <div class="d-flex gap-3 mt-4">
+            <a href="{{ url_for('main.api_guide') }}" class="btn btn-primary btn-lg">Read the API guide</a>
+            <a href="mailto:{{ support_email }}" class="btn btn-outline-primary btn-lg">Request API credentials</a>
+          </div>
+        </div>
+        <div class="col-lg-5 offset-lg-1">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <h3 class="h5">Launch checklist</h3>
+              <ol class="text-muted small mb-0 d-grid gap-2">
+                <li>Generate API credentials from Admin → Integrations and enable the API plan toggle.</li>
+                <li>Publish the docs bundle from <code>docs/api.md</code> to your marketing site or documentation portal.</li>
+                <li>Point the <code>api</code> subdomain at your CDN, issue certificates, and monitor uptime.</li>
+                <li>Announce availability in your customer changelog and link back to this guide.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="py-6 bg-gradient text-white">
     <div class="container text-center">
       <h2 class="display-5 fw-bold mb-3">Ready to reconcile every commission statement automatically?</h2>

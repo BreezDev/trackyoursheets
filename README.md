@@ -12,6 +12,7 @@ TrackYourSheets is a Flask-powered commissions CRM tailored for independent insu
 - **Workspace hierarchy** – Model offices, workspaces, agents, and producers with fine-grained role controls.
 - **Auto carrier detection** – Ingest CSVs with a `carrier` column and automatically split rows into carrier-specific batches.
 - **Admin controls** – Manage organisations, users, carriers, rules, API tokens, and workspace assignments with role-based access.
+- **HR & payroll alignment** – Give HR specialists their own portal, track onboarding, audit payroll runs, and respond to employee reports without exposing the full admin console.
 - **Email notifications** – Send welcome, invite, and import summary emails via Nylas with configurable recipients.
 - **Stripe billing** – Launch Checkout and the Customer Portal directly from settings when API keys are configured.
 - **Manual commissions** – Capture ad-hoc sales or adjustments per workspace with split enforcement and carrier tagging.
@@ -90,13 +91,19 @@ admin.md             # Admin console operations guide
 5. **Set up the WSGI configuration** to point at `app:app`.
 6. **Create scheduled tasks** (optional) to process imports, rebuild PDFs, and perform nightly backups.
 
+## Documentation quick links
+
+- `docs/hr.md` – People operations playbook covering the HR role, onboarding tracker, and security controls.
+- `docs/payroll.md` – Finance workflow for preparing, approving, and auditing payroll runs alongside HR.
+- `docs/api.md` – Public API reference with authentication, REST/GraphQL endpoints, webhook topics, and hosting instructions for `api.trackyoursheets.com`.
+
 ## Next steps & roadmap hints
 
 - Hook up Stripe billing (Checkout & Customer Portal) by wiring the `Subscription` model to live Stripe events. See `docs/stripe.md` for the current implementation.
 - Extend the import pipeline with OCR (pdfplumber/Tesseract) and asynchronous job processing via PythonAnywhere scheduled tasks.
 - Implement fuzzy matching and the learn-as-you-go resolver against `customers` and `policies` tables.
 - Generate producer statements as downloadable PDFs using WeasyPrint or wkhtmltopdf.
-- Expose webhook and API endpoints using the `APIKey` infrastructure and JWT auth.
+- Expand the public API with event-driven webhooks, fine-grained scopes, and bulk import helpers using the foundation described in `docs/api.md`.
 
 ## Testing guidance
 

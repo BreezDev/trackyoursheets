@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% block title %}API Guide · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">TrackYourSheets API Guide</h1>
+    <p class="text-muted mb-0">Automate reconciliations, payroll, and HR workflows with REST, GraphQL, and webhooks. Use this page alongside the full <code>docs/api.md</code> reference when publishing docs to <strong>api.trackyoursheets.com</strong>.</p>
+  </div>
+  <div class="mt-3 mt-lg-0">
+    <a class="btn btn-primary" href="{{ url_for('main.guide') }}">Back to interactive guide</a>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-8">
+    {% for section in api_sections %}
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">{{ section.title }}</h2>
+      </div>
+      <div class="card-body">
+        <ul class="list-unstyled d-grid gap-2 mb-0">
+          {% for bullet in section.bullets %}
+          <li class="d-flex gap-2 align-items-start">
+            <span class="text-primary"><i class="bi bi-check-circle-fill"></i></span>
+            <span>{{ bullet|safe }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="col-xl-4">
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Hosting playbook</h2>
+      </div>
+      <div class="card-body">
+        <p class="text-muted">Follow these steps to serve polished docs from <code>api.trackyoursheets.com</code> without disrupting the main marketing site.</p>
+        <ol class="mb-0 small d-grid gap-2">
+          {% for step in hosting_instructions %}
+          <li>{{ step }}</li>
+          {% endfor %}
+        </ol>
+      </div>
+    </div>
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Sample integration flow</h2>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">The pattern below pulls ready payroll runs into your accounting stack while keeping HR in sync.</p>
+        <ol class="mb-0 small d-grid gap-2">
+          {% for step in sample_flow %}
+          <li>{{ step }}</li>
+          {% endfor %}
+        </ol>
+      </div>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Base URLs</h2>
+      </div>
+      <div class="card-body">
+        <dl class="row small mb-0">
+          <dt class="col-5">REST</dt>
+          <dd class="col-7 text-break">{{ base_url }}/v1/</dd>
+          <dt class="col-5">GraphQL</dt>
+          <dd class="col-7 text-break">{{ base_url }}/graphql</dd>
+          <dt class="col-5">OAuth token</dt>
+          <dd class="col-7 text-break">{{ base_url }}/oauth/token</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-info mt-4" role="alert">
+  <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-lg-between gap-3">
+    <div>
+      <h2 class="h6 mb-1">Publishing docs?</h2>
+      <p class="mb-0 small">Mirror this guide into your static site generator, add changelog entries for every version bump, and cross-link back to the in-app knowledge centre so teams can find the latest contract.</p>
+    </div>
+    <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.landing') }}">Return to marketing site</a>
+  </div>
+</div>
+{% endblock %}
