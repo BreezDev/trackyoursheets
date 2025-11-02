@@ -177,3 +177,117 @@ def marketing_timeline() -> list[dict[str, str]]:
             "description": "Share tailored portals, automate payout approvals, and keep teams informed with alerts and dashboards.",
         },
     ]
+
+
+def marketing_operations_pillars() -> list[dict[str, str]]:
+    return [
+        {
+            "icon": "bi-speedometer2",
+            "title": "Realtime health",
+            "stat": "Live dashboards & anomaly alerts",
+            "description": "Spot exceptions instantly with streaming variance alerts, KPIs that refresh every minute, and rich audit timelines.",
+        },
+        {
+            "icon": "bi-cpu",
+            "title": "Augmented automations",
+            "stat": "70+ intelligent workflows",
+            "description": "Automate imports, payouts, escalations, and compliance reviews with configurable playbooks built for insurance revenue ops.",
+        },
+        {
+            "icon": "bi-shield-lock",
+            "title": "Enterprise trust",
+            "stat": "SOC 2 aligned controls",
+            "description": "Encryption in transit and at rest, fine-grained roles, and retention policies that meet even the strictest carrier requirements.",
+        },
+    ]
+
+
+def marketing_personas() -> list[dict[str, object]]:
+    return [
+        {
+            "title": "Agency principals",
+            "icon": "bi-briefcase",
+            "summary": "Forecast growth with revenue insights, drill into producer productivity, and model commission scenarios without spreadsheets.",
+            "focus_points": [
+                "Executive dashboards that show ARR, MRR, and renewal pipeline in one place",
+                "Variance reports that flag policies at risk before renewals lapse",
+                "Investor-ready exports with narrative highlights and performance trends",
+            ],
+        },
+        {
+            "title": "Operations leaders",
+            "icon": "bi-kanban",
+            "summary": "Standardise reconciliation, eliminate manual uploads, and keep every workspace aligned on SLAs and compliance steps.",
+            "focus_points": [
+                "Workflow builder with branching approvals and retry logic",
+                "Bulk import wizard with column matching, validation, and rollbacks",
+                "Exception inbox that prioritises high-value discrepancies for quick resolution",
+            ],
+        },
+        {
+            "title": "Producers & managers",
+            "icon": "bi-graph-up",
+            "summary": "Give producers self-service access to payouts, scorecards, and client movements so they can plan every conversation.",
+            "focus_points": [
+                "Live compensation statements with drill-downs to policy, carrier, and split",
+                "Goal tracking that compares actuals vs targets with coaching insights",
+                "Mobile-ready portal with notifications for approvals, clawbacks, and bonuses",
+            ],
+        },
+    ]
+
+
+def marketing_integrations() -> list[dict[str, str]]:
+    return [
+        {"name": "Vertafore", "category": "Carrier & agency systems"},
+        {"name": "Applied Epic", "category": "Carrier & agency systems"},
+        {"name": "EZLynx", "category": "Carrier & agency systems"},
+        {"name": "QuickBooks Online", "category": "Accounting"},
+        {"name": "Sage Intacct", "category": "Accounting"},
+        {"name": "Slack", "category": "Collaboration"},
+        {"name": "Microsoft Teams", "category": "Collaboration"},
+        {"name": "Snowflake", "category": "Data warehouse"},
+        {"name": "Power BI", "category": "Analytics"},
+        {"name": "Tableau", "category": "Analytics"},
+    ]
+
+
+def marketing_testimonials() -> list[dict[str, str]]:
+    return [
+        {
+            "quote": "TrackYourSheets turned weekly fire drills into a predictable rhythm. Our finance team closes the books two days faster every month.",
+            "name": "Avery Mitchell",
+            "role": "COO, Beacon Insurance Partners",
+        },
+        {
+            "quote": "Producers finally trust the payout numbers. The portal puts everything in context and we caught three high-value variances in the first week.",
+            "name": "Jordan Rivers",
+            "role": "VP of Sales, Summit Brokerage",
+        },
+        {
+            "quote": "Implementation was shockingly smooth. The automation playbooks mirrored our compliance checklist out of the box.",
+            "name": "Priya Desai",
+            "role": "Director of Operations, Northwind Mutual",
+        },
+    ]
+
+
+def marketing_top_questions() -> list[dict[str, str]]:
+    return [
+        {
+            "question": "How quickly can we get started?",
+            "answer": "Most agencies import their first carrier statements within 48 hours. Guided onboarding and a migration specialist help you map data, configure roles, and launch workspaces step-by-step.",
+        },
+        {
+            "question": "What security certifications do you maintain?",
+            "answer": "TrackYourSheets follows SOC 2 Type II controls, enforces SSO with SAML or OAuth, and provides full audit trails for every data change. Data is encrypted at rest with AES-256 and in transit with TLS 1.3.",
+        },
+        {
+            "question": "Can we connect our existing BI stack?",
+            "answer": "Yes. Use the REST or GraphQL API, schedule warehouse syncs to Snowflake or BigQuery, and stream webhook events for payroll approvals, HR escalations, and commission updates.",
+        },
+        {
+            "question": "Do you support multi-entity agencies?",
+            "answer": "Workspaces, role-based permissions, and consolidated reporting make it easy to manage multiple offices or brands while preserving autonomy and data privacy.",
+        },
+    ]

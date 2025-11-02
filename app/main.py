@@ -51,8 +51,13 @@ from .resend_email import (
 from .marketing import (
     build_plan_details,
     marketing_highlights,
+    marketing_integrations,
     marketing_metrics,
+    marketing_operations_pillars,
+    marketing_personas,
+    marketing_testimonials,
     marketing_timeline,
+    marketing_top_questions,
 )
 
 
@@ -164,9 +169,6 @@ def _serialize_audit_event(event: AuditLog, actor_lookup: dict[int, User]) -> di
 
 @main_bp.route("/")
 def landing():
-    if current_user.is_authenticated:
-        return redirect(url_for("main.dashboard"))
-
     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
     plan_details = build_plan_details(plans)
 
@@ -180,8 +182,14 @@ def landing():
         plan_details=plan_details,
         hero_metrics=marketing_metrics(),
         feature_sections=marketing_highlights(),
+        operations_pillars=marketing_operations_pillars(),
+        persona_sections=marketing_personas(),
+        integrations=marketing_integrations(),
+        testimonials=marketing_testimonials(),
+        top_questions=marketing_top_questions(),
         timeline_steps=marketing_timeline(),
         api_guide_url=api_guide_url,
+        show_dashboard_link=current_user.is_authenticated,
     )
 
 
