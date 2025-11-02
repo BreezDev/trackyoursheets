@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block title %}Submit HR Report · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-xl-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h1 class="h3 mb-1">Report a concern to HR</h1>
+        <p class="text-muted">Use this form to confidentially flag issues, policy violations, payroll discrepancies, or wellbeing concerns. HR will follow up with you directly.</p>
+        <form method="post" class="mt-4">
+          <div class="mb-3">
+            <label class="form-label" for="report-subject">Subject</label>
+            <input type="text" class="form-control" id="report-subject" name="subject" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="report-category">Category</label>
+            <select class="form-select" id="report-category" name="category">
+              {% for key, label in category_options.items() %}
+              <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="report-priority">Priority</label>
+            <select class="form-select" id="report-priority" name="priority">
+              {% for priority in priority_choices %}
+              <option value="{{ priority }}">{{ priority|title }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="report-description">What happened?</label>
+            <textarea class="form-control" id="report-description" name="description" rows="6" placeholder="Share as much detail as possible so HR can support you." required></textarea>
+          </div>
+          <div class="alert alert-secondary" role="alert">
+            <div class="d-flex align-items-center gap-3">
+              <i class="bi bi-shield-lock fs-4"></i>
+              <div class="small">Only HR administrators can view submissions. We log the submission time and your account so the team can reach out with next steps.</div>
+            </div>
+          </div>
+          <div class="d-flex justify-content-between align-items-center">
+            <div class="small text-muted">Submitting as {{ current_user.display_name_for_ui }}</div>
+            <button type="submit" class="btn btn-primary">Send to HR</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

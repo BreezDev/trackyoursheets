@@ -6,6 +6,7 @@
     <a class="nav-link {% if active == 'categories' %}active{% endif %}" href="{{ url_for('admin.manage_categories') }}">Categories &amp; tags</a>
     <a class="nav-link {% if active == 'guide' %}active{% endif %}" href="{{ url_for('admin.how_to') }}">Role guides</a>
     <a class="nav-link {% if active == 'reports' %}active{% endif %}" href="{{ url_for('reports.overview') }}">Reports &amp; exports</a>
+    <a class="nav-link {% if active == 'payroll' %}active{% endif %}" href="{{ url_for('admin.payroll_dashboard') }}">Payroll</a>
     <a class="nav-link {% if active == 'settings' %}active{% endif %}" href="{{ url_for('main.settings') }}">Settings &amp; billing</a>
   </nav>
 </div>

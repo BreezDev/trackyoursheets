@@ -40,6 +40,9 @@
               <a class="nav-link" href="{{ url_for('main.guide') }}">Guide</a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('hr.submit_complaint') }}">HR support</a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="{{ url_for('main.settings') }}">Settings</a>
             </li>
             {% if current_user.role in ['owner', 'admin', 'agent', 'bookkeeper'] %}
