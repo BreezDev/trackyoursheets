@@ -21,6 +21,8 @@ from sqlalchemy import func, or_
 
 from werkzeug.security import generate_password_hash
 
+from werkzeug.routing import BuildError
+
 from .models import (
     AuditLog,
     CommissionTransaction,
@@ -168,12 +170,18 @@ def landing():
     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
     plan_details = build_plan_details(plans)
 
+    try:
+        api_guide_url = url_for("main.api_guide")
+    except BuildError:
+        api_guide_url = url_for("main.guide")
+
     return render_template(
         "landing.html",
         plan_details=plan_details,
         hero_metrics=marketing_metrics(),
         feature_sections=marketing_highlights(),
         timeline_steps=marketing_timeline(),
+        api_guide_url=api_guide_url,
     )
 
 
