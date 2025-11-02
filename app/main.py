@@ -21,6 +21,8 @@ from sqlalchemy import func, or_
 
 from werkzeug.security import generate_password_hash
 
+from werkzeug.routing import BuildError
+
 from .models import (
     AuditLog,
     CommissionTransaction,
@@ -168,18 +170,90 @@ def landing():
     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
     plan_details = build_plan_details(plans)
 
+    try:
+        api_guide_url = url_for("main.api_guide")
+    except BuildError:
+        api_guide_url = url_for("main.guide")
+
     return render_template(
         "landing.html",
         plan_details=plan_details,
         hero_metrics=marketing_metrics(),
         feature_sections=marketing_highlights(),
         timeline_steps=marketing_timeline(),
+        api_guide_url=api_guide_url,
     )
 
 
 @main_bp.route("/contact")
 def contact():
     return render_template("contact.html")
+
+
+@main_bp.route("/api-guide")
+def api_guide():
+    api_sections = [
+        {
+            "title": "Authentication & security",
+            "bullets": [
+                "Use OAuth 2.1 client credentials to request access tokens from `/oauth/token` with scopes like `workspaces.read` and `payroll.read`.",
+                "Rotate secrets quarterly via `/oauth/rotate` — the previous secret remains valid for 24 hours to avoid downtime.",
+                "Verify webhook signatures with the `X-TrackYourSheets-Signature` header (HMAC-SHA256) before processing events.",
+                "Respect per-organisation rate limits of 1,000 requests/minute and use the `Idempotency-Key` header for retries.",
+            ],
+        },
+        {
+            "title": "Core REST endpoints",
+            "bullets": [
+                "`GET /v1/workspaces` and `POST /v1/workspaces` for creating and managing agent pods.",
+                "`GET /v1/payroll/runs` plus `POST /v1/payroll/runs/{id}/approve` for end-to-end payroll automation.",
+                "`GET /v1/hr/employees` and `POST /v1/hr/documents` to sync directory data and push policy updates.",
+                "`POST /v1/reports/export` to generate asynchronous CSV/PDF bundles for analytics and audits.",
+            ],
+        },
+        {
+            "title": "GraphQL highlights",
+            "bullets": [
+                "Query `organisation`, `workspaces`, `payrollRuns`, and `employees` with Relay-style pagination.",
+                "Use mutations such as `createWorkspace`, `upsertProducer`, and `acknowledgeHRDocument` for transactional workflows.",
+                "Send the `x-trackyoursheets-organisation` header when integrating multiple tenants from a single service account.",
+                "Filter nodes by status, role, or updated timestamps to minimise payload size.",
+            ],
+        },
+        {
+            "title": "Webhook subscriptions",
+            "bullets": [
+                "Subscribe via `POST /v1/webhooks` and respond with `200 OK` within five seconds to avoid retries.",
+                "Listen for `payroll.run.approved`, `hr.complaint.created`, `import.batch.completed`, and `report.export.ready` events.",
+                "Store webhook IDs and secrets securely — they are required when disabling or rotating endpoints.",
+                "Replay missed deliveries using the dashboard resend tool if your integration was temporarily offline.",
+            ],
+        },
+    ]
+
+    hosting_instructions = [
+        "Build a static version of the API docs (e.g. MkDocs) and deploy it alongside the marketing site.",
+        "Create a CNAME record pointing `api.trackyoursheets.com` at your docs CDN or reverse proxy.",
+        "Issue TLS certificates for the subdomain and add uptime monitoring so expirations are caught early.",
+        "Redirect legacy doc URLs to `/api-guide` so existing bookmarks continue working.",
+    ]
+
+    sample_flow = [
+        "Request an access token every 45 minutes with the client credentials grant.",
+        "Poll `GET /v1/payroll/runs?status=ready` to find new payouts and fetch line items for accounting.",
+        "POST acknowledgements back to TrackYourSheets once payments are reconciled in your ERP.",
+        "Subscribe to `payroll.run.approved` webhooks to trigger off-cycle exports instantly.",
+    ]
+
+    base_url = request.host_url.rstrip("/")
+
+    return render_template(
+        "api_guide.html",
+        api_sections=api_sections,
+        hosting_instructions=hosting_instructions,
+        sample_flow=sample_flow,
+        base_url=base_url,
+    )
 
 
 @main_bp.route("/dashboard")

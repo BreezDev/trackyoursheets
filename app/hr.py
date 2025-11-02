@@ -38,7 +38,7 @@ from .models import (
 )
 
 
-ACCESS_ROLES = {"owner", "admin", "agent", "bookkeeper"}
+ACCESS_ROLES = {"owner", "admin", "agent", "bookkeeper", "hr"}
 PUBLIC_HR_ENDPOINTS = {
     "hr.submit_complaint",
     "hr.complaint_submitted",
