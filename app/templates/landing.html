@@ -4,7 +4,28 @@
 {% block main_wrapper %}
 <main class="landing-main">
   {% block flash_messages %}{{ super() }}{% endblock %}
-  <section class="landing-hero text-white py-6">
+
+  {% if show_dashboard_link %}
+  <section class="landing-section landing-section--notice py-0">
+    <div class="container py-3">
+      <div class="alert alert-primary d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 shadow-sm mb-0">
+        <div class="d-flex align-items-start gap-3">
+          <span class="badge rounded-circle bg-primary-soft text-primary flex-shrink-0"><i class="bi bi-house-heart"></i></span>
+          <div>
+            <h2 class="h5 mb-1 text-primary-emphasis">Welcome back!</h2>
+            <p class="mb-0 text-muted">You&apos;re signed in, so explore the refreshed homepage or jump right back into your workspace when you&apos;re ready.</p>
+          </div>
+        </div>
+        <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary btn-lg shadow-sm">Return to dashboard</a>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="landing-hero text-white py-6 position-relative overflow-hidden">
+    <div class="landing-hero__spark landing-hero__spark--one"></div>
+    <div class="landing-hero__spark landing-hero__spark--two"></div>
+    <div class="landing-hero__grid"></div>
     <div class="container">
       <div class="row align-items-center g-5">
         <div class="col-lg-6">
@@ -52,9 +73,51 @@
                   <div class="fs-4 fw-semibold">3m 12s</div>
                 </div>
               </div>
+              <hr class="border-white-25 my-4">
+              <div class="d-flex flex-column gap-2">
+                <div class="d-flex justify-content-between align-items-center">
+                  <div class="text-white-75 small">Automation runs</div>
+                  <span class="badge bg-primary-soft text-white">42 today</span>
+                </div>
+                <div class="progress progress-thin">
+                  <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 78%" aria-valuenow="78" aria-valuemin="0" aria-valuemax="100"></div>
+                </div>
+                <small class="text-white-50">Playbooks executed automatically across imports, payouts, and compliance reviews.</small>
+              </div>
             </div>
           </div>
         </div>
+      </div>
+      <div class="scroll-indicator animate-fade-in delay-3">
+        <span class="scroll-indicator__dot"></span>
+        <span class="scroll-indicator__label">Scroll to see what&apos;s new</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="py-6 landing-section landing-section--spotlight">
+    <div class="container">
+      <div class="row align-items-end g-4 mb-5">
+        <div class="col-lg-8">
+          <span class="badge rounded-pill bg-info-soft text-info fw-semibold">Command center</span>
+          <h2 class="display-6 fw-bold mt-3">Run revenue operations with clarity, automation, and trust.</h2>
+          <p class="text-muted lead">The TrackYourSheets command center ties together insights, workflows, and controls so your team can orchestrate commission operations at scale.</p>
+        </div>
+        <div class="col-lg-4 text-lg-end">
+          <div class="text-muted small">Trusted by regional brokerages, MGA networks, and multi-state agencies managing billions in premium.</div>
+        </div>
+      </div>
+      <div class="row g-4 pillars-grid">
+        {% for pillar in operations_pillars %}
+        <div class="col-md-4">
+          <div class="pillar-card animate-rise">
+            <div class="icon-badge mb-3"><i class="bi {{ pillar.icon }}"></i></div>
+            <h3 class="h4 mb-1">{{ pillar.title }}</h3>
+            <p class="text-primary fw-semibold mb-2">{{ pillar.stat }}</p>
+            <p class="text-muted mb-0">{{ pillar.description }}</p>
+          </div>
+        </div>
+        {% endfor %}
       </div>
     </div>
   </section>
@@ -80,6 +143,64 @@
           </div>
         </div>
         {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section id="personas" class="py-6 landing-section landing-section--muted">
+    <div class="container">
+      <div class="row justify-content-between align-items-center mb-5 g-4">
+        <div class="col-lg-7">
+          <span class="badge rounded-pill bg-success-soft text-success fw-semibold">Teams we empower</span>
+          <h2 class="display-6 fw-bold mt-3">Purpose-built for every stakeholder who touches commission data.</h2>
+          <p class="text-muted lead">From agency principals to frontline producers, TrackYourSheets turns complex, messy data into insights, playbooks, and confident decisions.</p>
+        </div>
+        <div class="col-lg-4 text-lg-end">
+          <a href="{{ url_for('auth.signup') }}" class="btn btn-success btn-lg shadow-sm">See onboarding plans</a>
+        </div>
+      </div>
+      <div class="row g-4">
+        {% for persona in persona_sections %}
+        <div class="col-md-4">
+          <div class="persona-card h-100 animate-tilt">
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span class="icon-badge icon-badge--alt"><i class="bi {{ persona.icon }}"></i></span>
+              <h3 class="h5 mb-0">{{ persona.title }}</h3>
+            </div>
+            <p class="text-muted">{{ persona.summary }}</p>
+            <ul class="list-unstyled d-grid gap-2 mt-4">
+              {% for bullet in persona.focus_points %}
+              <li class="d-flex gap-2 align-items-start">
+                <span class="text-success"><i class="bi bi-stars"></i></span>
+                <span>{{ bullet }}</span>
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section id="integrations" class="py-5 landing-section bg-white">
+    <div class="container">
+      <div class="row align-items-center g-4">
+        <div class="col-lg-4">
+          <span class="badge rounded-pill bg-warning-soft text-warning fw-semibold">Integrations</span>
+          <h2 class="h3 fw-bold mt-3">Connect your full revenue stack in minutes.</h2>
+          <p class="text-muted mb-0">Native adapters for carrier downloads, accounting suites, collaboration hubs, and analytics platforms keep data flowing bi-directionally without brittle spreadsheets.</p>
+        </div>
+        <div class="col-lg-8">
+          <div class="integration-grid">
+            {% for integration in integrations %}
+            <div class="integration-chip animate-pulse" style="animation-delay: {{ loop.index0 * 0.1 }}s">
+              <span class="integration-name">{{ integration.name }}</span>
+              <span class="integration-category">{{ integration.category }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -187,6 +308,60 @@
                 <li>Announce availability in your customer changelog and link back to this guide.</li>
               </ol>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="stories" class="py-6 bg-white landing-section">
+    <div class="container">
+      <div class="row justify-content-center text-center mb-5">
+        <div class="col-lg-8">
+          <span class="badge rounded-pill bg-secondary-soft text-secondary fw-semibold">Customer stories</span>
+          <h2 class="display-6 fw-bold mt-3">Teams that switched to TrackYourSheets stay for the clarity.</h2>
+          <p class="text-muted lead">Hear from agencies that turned chaotic spreadsheets into auditable, automated revenue operations.</p>
+        </div>
+      </div>
+      <div class="row g-4">
+        {% for testimonial in testimonials %}
+        <div class="col-md-4">
+          <div class="testimonial-card h-100 animate-rise">
+            <div class="testimonial-quote">“{{ testimonial.quote }}”</div>
+            <div class="testimonial-author mt-4">
+              <div class="fw-semibold">{{ testimonial.name }}</div>
+              <div class="text-muted small">{{ testimonial.role }}</div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section id="faq" class="py-6 landing-section landing-section--muted">
+    <div class="container">
+      <div class="row justify-content-between align-items-start g-4">
+        <div class="col-lg-5">
+          <span class="badge rounded-pill bg-dark text-white fw-semibold">FAQ</span>
+          <h2 class="display-6 fw-bold mt-3">Top questions from growing agencies.</h2>
+          <p class="text-muted lead">Still curious? Explore the answers below or drop our team a note and we&apos;ll tailor a walkthrough to your workflows.</p>
+          <a href="mailto:{{ support_email }}" class="btn btn-dark btn-lg mt-3">Email {{ support_email }}</a>
+        </div>
+        <div class="col-lg-7">
+          <div class="accordion" id="faqAccordion">
+            {% for item in top_questions %}
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="faqHeading{{ loop.index }}">
+                <button class="accordion-button {{ 'collapsed' if not loop.first }}" type="button" data-bs-toggle="collapse" data-bs-target="#faqCollapse{{ loop.index }}" aria-expanded="{{ 'true' if loop.first else 'false' }}" aria-controls="faqCollapse{{ loop.index }}">
+                  {{ item.question }}
+                </button>
+              </h2>
+              <div id="faqCollapse{{ loop.index }}" class="accordion-collapse collapse {{ 'show' if loop.first }}" aria-labelledby="faqHeading{{ loop.index }}" data-bs-parent="#faqAccordion">
+                <div class="accordion-body text-muted">{{ item.answer }}</div>
+              </div>
+            </div>
+            {% endfor %}
           </div>
         </div>
       </div>
