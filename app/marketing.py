@@ -146,6 +146,11 @@ def marketing_highlights() -> list[dict[str, str]]:
             "title": "Team visibility",
             "description": "Role-based access, manager workspaces, and producer scorecards keep everyone aligned on goals.",
         },
+        {
+            "icon": "bi-cloud-check",
+            "title": "Open API",
+            "description": "Secure REST, GraphQL, and webhook endpoints let you sync payroll, HR, and analytics into your own stack.",
+        },
     ]
 
 

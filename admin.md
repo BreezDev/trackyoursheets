@@ -7,6 +7,7 @@ The admin console centralises every organisation-level configuration task. This 
 - Owners, admins, and workspace agents can access `/admin`.
 - Owners are created during signup. Promote additional admins or agents from the Team card.
 - Agents manage a single workspace (and the producers within it). Producers, bookkeepers, and read-only auditors stay within their scoped dashboards.
+- HR specialists focus on the HR portal. Invite them from the teammate modal when people operations needs insight without full admin rights.
 
 ## Organisation overview
 
