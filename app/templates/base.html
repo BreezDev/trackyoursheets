@@ -40,6 +40,9 @@
               <a class="nav-link" href="{{ url_for('main.guide') }}">Guide</a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('main.messages_home') }}">Messages</a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="{{ url_for('main.api_guide') }}">API</a>
             </li>
             <li class="nav-item">
@@ -115,6 +118,12 @@
         </div>
       </div>
     </nav>
+    <div class="bg-warning-subtle text-warning-emphasis border-bottom py-2">
+      <div class="container d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-2 small">
+        <span><strong>Work in progress:</strong> TrackYourSheets is shipping new features every week. Spot a bug? Email <a class="link-underline link-underline-opacity-0" href="mailto:contact@trackyoursheets.com">contact@trackyoursheets.com</a> or DM us on <a class="link-underline link-underline-opacity-0" href="https://www.instagram.com/trackyoursheets" target="_blank" rel="noopener">Instagram</a>.</span>
+        <a class="btn btn-warning btn-sm" href="mailto:contact@trackyoursheets.com">Report an issue</a>
+      </div>
+    </div>
     {% block main_wrapper %}
     <main class="{% block main_class %}container my-4{% endblock %}">
       {% block flash_messages %}

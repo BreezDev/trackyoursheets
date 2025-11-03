@@ -67,12 +67,12 @@
             </div>
             <div class="col-md-6">
               <label class="form-label">Revenue category</label>
-              <input list="categoryOptions" name="category" class="form-control" placeholder="auto / life / health / ...">
-              <datalist id="categoryOptions">
+              <select name="category" class="form-select" required>
+                <option value="">Select a category</option>
                 {% for category in categories %}
-                <option value="{{ category }}">
+                <option value="{{ category }}">{{ category }}</option>
                 {% endfor %}
-              </datalist>
+              </select>
             </div>
             <div class="col-md-6">
               <label class="form-label">Product / line of business</label>

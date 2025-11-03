@@ -4,6 +4,7 @@
     <a class="nav-link {% if active == 'overview' %}active{% endif %}" href="{{ url_for('admin.index') }}">Overview</a>
     <a class="nav-link {% if active == 'leaderboard' %}active{% endif %}" href="{{ url_for('admin.leaderboard') }}">Producer overrides</a>
     <a class="nav-link {% if active == 'categories' %}active{% endif %}" href="{{ url_for('admin.manage_categories') }}">Categories &amp; tags</a>
+    <a class="nav-link {% if active == 'users' %}active{% endif %}" href="{{ url_for('admin.manage_user_compensation') }}">Users &amp; payroll</a>
     <a class="nav-link {% if active == 'guide' %}active{% endif %}" href="{{ url_for('admin.how_to') }}">Role guides</a>
     <a class="nav-link {% if active == 'reports' %}active{% endif %}" href="{{ url_for('reports.overview') }}">Reports &amp; exports</a>
     <a class="nav-link {% if active == 'payroll' %}active{% endif %}" href="{{ url_for('admin.payroll_dashboard') }}">Payroll</a>

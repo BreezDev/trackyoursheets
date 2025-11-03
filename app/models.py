@@ -49,6 +49,7 @@ class Organization(TimestampMixin, db.Model):
     hr_documents = db.relationship("HRDocument", backref="organization", lazy=True)
     hr_complaints = db.relationship("HRComplaint", backref="organization", lazy=True)
     payroll_runs = db.relationship("PayrollRun", backref="organization", lazy=True)
+    message_threads = db.relationship("MessageThread", backref="organization", lazy=True)
 
 
 class SubscriptionPlan(db.Model):
@@ -147,6 +148,11 @@ class User(UserMixin, TimestampMixin, db.Model):
     job_title = db.Column(db.String(120))
     phone_number = db.Column(db.String(64))
     emergency_contact = db.Column(db.JSON)
+    compensation_currency = db.Column(db.String(8), nullable=False, default="USD")
+    base_salary = db.Column(db.Numeric(12, 2))
+    bonus_plan = db.Column(db.String(120))
+    bonus_target = db.Column(db.Numeric(12, 2))
+    compensation_notes = db.Column(db.Text)
     last_login = db.Column(db.DateTime)
     notification_preferences = db.Column(
         db.JSON, default=lambda: dict(DEFAULT_NOTIFICATION_PREFERENCES)
@@ -197,6 +203,38 @@ class User(UserMixin, TimestampMixin, db.Model):
         if self.preferred_name:
             return self.preferred_name
         return None
+
+    def update_compensation(
+        self,
+        *,
+        currency: str | None = None,
+        base_salary: "Decimal | None" = None,
+        bonus_plan: str | None = None,
+        bonus_target: "Decimal | None" = None,
+        notes: str | None = None,
+    ) -> None:
+        if currency:
+            self.compensation_currency = currency.upper()
+        self.base_salary = base_salary
+        self.bonus_plan = bonus_plan or None
+        self.bonus_target = bonus_target
+        self.compensation_notes = notes or None
+
+    @property
+    def compensation_summary(self) -> str:
+        pieces: list[str] = []
+        if self.base_salary is not None:
+            pieces.append(
+                f"Base ${self.base_salary:,.2f} {self.compensation_currency}".strip()
+            )
+        if self.bonus_plan:
+            target = (
+                f" (${self.bonus_target:,.2f})" if self.bonus_target is not None else ""
+            )
+            pieces.append(f"Bonus: {self.bonus_plan}{target}")
+        if not pieces:
+            return "No compensation details recorded"
+        return " · ".join(pieces)
 
     def wants_notification(self, category: str) -> bool:
         prefs = self.notification_preferences or {}
@@ -619,6 +657,55 @@ class WorkspaceChatMessage(TimestampMixin, db.Model):
 
     workspace = db.relationship("Workspace", backref="chat_messages", foreign_keys=[workspace_id])
     author = db.relationship("User", backref="chat_messages", foreign_keys=[author_id])
+
+
+class MessageThread(TimestampMixin, db.Model):
+    __tablename__ = "message_threads"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    name = db.Column(db.String(180))
+    is_group = db.Column(db.Boolean, nullable=False, default=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    last_message_at = db.Column(db.DateTime)
+
+    creator = db.relationship("User", backref="message_threads_created", foreign_keys=[created_by_id])
+    participants = db.relationship(
+        "MessageParticipant",
+        backref="thread",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+    messages = db.relationship(
+        "ConversationMessage",
+        backref="thread",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+
+
+class MessageParticipant(TimestampMixin, db.Model):
+    __tablename__ = "message_participants"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    thread_id = db.Column(db.Integer, db.ForeignKey("message_threads.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    role = db.Column(db.String(32), nullable=False, default="member")
+
+    user = db.relationship("User", backref="message_participants", foreign_keys=[user_id])
+
+
+class ConversationMessage(TimestampMixin, db.Model):
+    __tablename__ = "conversation_messages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+    thread_id = db.Column(db.Integer, db.ForeignKey("message_threads.id"), nullable=False)
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+
+    author = db.relationship("User", backref="conversation_messages", foreign_keys=[author_id])
 
 
 class HRDocument(TimestampMixin, db.Model):

@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
-from datetime import datetime, timedelta
+import re
+from datetime import date, datetime, timedelta
 from typing import Sequence
 
 from flask import (
@@ -18,10 +19,12 @@ from flask import (
 from flask_login import current_user, login_required
 
 from sqlalchemy import func, or_
+from sqlalchemy.orm import joinedload
 
 from werkzeug.security import generate_password_hash
 
 from werkzeug.routing import BuildError
+from markupsafe import Markup, escape
 
 from .models import (
     AuditLog,
@@ -30,6 +33,9 @@ from .models import (
     Workspace,
     WorkspaceNote,
     WorkspaceChatMessage,
+    MessageThread,
+    MessageParticipant,
+    ConversationMessage,
     Organization,
     SubscriptionPlan,
     Subscription,
@@ -62,6 +68,9 @@ from .marketing import (
 
 
 main_bp = Blueprint("main", __name__)
+
+
+MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_.+-]+)")
 
 
 def _display_user_name(user):
@@ -138,10 +147,74 @@ def _serialize_chat_message(message: WorkspaceChatMessage) -> dict:
     return {
         "id": message.id,
         "content": message.content,
+        "content_html": str(_render_chat_message_html(message)),
         "author": _display_user_name(message.author),
         "created_at": message.created_at.isoformat() if message.created_at else None,
         "created_at_display": _format_timestamp(message.created_at),
     }
+
+
+def _calculate_premium_totals(
+    org_id: int, workspace_ids: Sequence[int] | None
+) -> dict[str, float]:
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())
+    start_of_month = today.replace(day=1)
+    quarter_index = (today.month - 1) // 3
+    start_of_quarter = date(today.year, quarter_index * 3 + 1, 1)
+    start_of_year = date(today.year, 1, 1)
+
+    def _sum_since(start_date: date | None) -> float:
+        query = CommissionTransaction.query.filter_by(org_id=org_id)
+        if workspace_ids:
+            query = query.filter(
+                or_(
+                    CommissionTransaction.workspace_id.in_(workspace_ids),
+                    CommissionTransaction.batch.has(
+                        ImportBatch.workspace_id.in_(workspace_ids)
+                    ),
+                )
+            )
+        if start_date:
+            query = query.filter(CommissionTransaction.txn_date >= start_date)
+        total = (
+            query.with_entities(
+                func.coalesce(func.sum(CommissionTransaction.premium), 0)
+            ).scalar()
+            or 0
+        )
+        return float(total)
+
+    return {
+        "today": _sum_since(today),
+        "week": _sum_since(start_of_week),
+        "month": _sum_since(start_of_month),
+        "quarter": _sum_since(start_of_quarter),
+        "year": _sum_since(start_of_year),
+    }
+
+
+def _render_chat_message_html(message: WorkspaceChatMessage) -> Markup:
+    content = message.content or ""
+    parts: list[Markup] = []
+    last_index = 0
+    for match in MENTION_PATTERN.finditer(content):
+        start, end = match.span()
+        if start > last_index:
+            parts.append(escape(content[last_index:start]))
+        handle = escape(match.group(1))
+        parts.append(
+            Markup(
+                f'<span class="badge rounded-pill bg-primary-soft text-primary">@{handle}</span>'
+            )
+        )
+        last_index = end
+    if last_index < len(content):
+        parts.append(escape(content[last_index:]))
+    if not parts:
+        parts.append(escape(content))
+    combined = Markup("").join(parts)
+    return Markup(str(combined).replace("\n", "<br>"))
 
 
 def _audit_actor_label(actor, actor_id: int | None) -> str:
@@ -177,6 +250,27 @@ def landing():
     except BuildError:
         api_guide_url = url_for("main.guide")
 
+    resource_links = [
+        {
+            "title": "Role-based onboarding guide",
+            "description": "Step-by-step directions for admins, HR, finance, and producers—accessible anytime in-app.",
+            "href": url_for("main.guide"),
+            "icon": "bi-journal-text",
+        },
+        {
+            "title": "Team signup Excel template",
+            "description": "Collect emails, roles, base salaries, and workspace assignments in one spreadsheet during onboarding.",
+            "href": url_for("static", filename="downloads/signup_template.xlsx"),
+            "icon": "bi-file-earmark-spreadsheet",
+        },
+        {
+            "title": "Messaging & collaboration tips",
+            "description": "Use workspace chat, private conversations, and shared boards to keep every office aligned.",
+            "href": url_for("main.messages_home"),
+            "icon": "bi-chat-dots",
+        },
+    ]
+
     return render_template(
         "landing.html",
         plan_details=plan_details,
@@ -190,6 +284,7 @@ def landing():
         timeline_steps=marketing_timeline(),
         api_guide_url=api_guide_url,
         show_dashboard_link=current_user.is_authenticated,
+        resource_links=resource_links,
     )
 
 
@@ -334,6 +429,10 @@ def dashboard():
     shared_note = None
     chat_messages = []
     chat_payload = []
+    premium_totals = _calculate_premium_totals(
+        org_id,
+        list(workspace_ids) if workspace_ids else None,
+    )
     if active_workspace:
         personal_note = (
             WorkspaceNote.query.filter_by(
@@ -364,6 +463,8 @@ def dashboard():
             .all()
         )
         chat_messages = list(reversed(chat_query))
+        for message in chat_messages:
+            message.rendered_content = _render_chat_message_html(message)
         chat_payload = [_serialize_chat_message(message) for message in chat_messages]
 
     return render_template(
@@ -380,6 +481,9 @@ def dashboard():
         shared_note_meta=_note_meta(shared_note),
         chat_messages=chat_messages,
         chat_messages_payload=chat_payload,
+        premium_totals=premium_totals,
+        premium_currency=getattr(current_user, "compensation_currency", None)
+        or "USD",
     )
 
 
@@ -853,6 +957,171 @@ def settings():
         accessible_workspaces=accessible_workspaces,
         joinable_workspaces=joinable_workspaces,
         extra_seat_price=extra_seat_price,
+    )
+
+
+@main_bp.route("/messages", methods=["GET", "POST"])
+@login_required
+def messages_home():
+    org = Organization.query.get_or_404(current_user.org_id)
+    teammates = (
+        User.query.filter_by(org_id=org.id)
+        .filter(User.id != current_user.id)
+        .order_by(User.first_name.asc(), User.last_name.asc())
+        .all()
+    )
+
+    if request.method == "POST":
+        participant_ids = {
+            current_user.id,
+            *{
+                int(value)
+                for value in request.form.getlist("participants")
+                if value.isdigit()
+            },
+        }
+        participant_users = (
+            User.query.filter(User.id.in_(participant_ids))
+            .filter_by(org_id=org.id)
+            .all()
+        )
+        if len(participant_users) != len(participant_ids):
+            flash("Select teammates from your organisation.", "danger")
+            return redirect(url_for("main.messages_home"))
+
+        is_group = len(participant_users) > 2
+        name = (request.form.get("name") or "").strip()
+        if not name:
+            if is_group:
+                name = ", ".join(
+                    sorted(
+                        {user.full_name or user.email for user in participant_users}
+                    )
+                )
+            else:
+                other = next(user for user in participant_users if user.id != current_user.id)
+                name = other.full_name or other.email
+
+        initial_message = (request.form.get("message") or "").strip()
+
+        thread = MessageThread(
+            org_id=org.id,
+            name=name,
+            is_group=is_group,
+            created_by_id=current_user.id,
+            last_message_at=datetime.utcnow() if initial_message else None,
+        )
+        db.session.add(thread)
+        db.session.flush()
+
+        for user in participant_users:
+            participant = MessageParticipant(
+                org_id=org.id,
+                thread_id=thread.id,
+                user_id=user.id,
+                role="owner" if user.id == current_user.id else "member",
+            )
+            db.session.add(participant)
+
+        if initial_message:
+            message = ConversationMessage(
+                org_id=org.id,
+                thread_id=thread.id,
+                author_id=current_user.id,
+                content=initial_message,
+            )
+            db.session.add(message)
+
+        db.session.commit()
+        flash("Conversation created.", "success")
+        return redirect(url_for("main.view_message_thread", thread_id=thread.id))
+
+    participant_thread_ids = (
+        MessageParticipant.query.with_entities(MessageParticipant.thread_id)
+        .filter_by(org_id=org.id, user_id=current_user.id)
+        .subquery()
+    )
+    threads = (
+        MessageThread.query.filter_by(org_id=org.id)
+        .filter(MessageThread.id.in_(participant_thread_ids))
+        .options(
+            joinedload(MessageThread.participants).joinedload(MessageParticipant.user),
+            joinedload(MessageThread.messages).joinedload(ConversationMessage.author),
+        )
+        .order_by(MessageThread.last_message_at.desc().nullslast(), MessageThread.created_at.desc())
+        .all()
+    )
+
+    for thread in threads:
+        participant_names = [
+            _display_user_name(participant.user)
+            for participant in thread.participants
+            if participant.user_id != current_user.id and participant.user
+        ]
+        thread.display_participants = participant_names or ["Just you"]
+        thread_preview = None
+        if thread.messages:
+            latest = max(thread.messages, key=lambda msg: msg.created_at or datetime.min)
+            thread_preview = {
+                "author": _display_user_name(latest.author),
+                "timestamp": latest.created_at,
+                "body": latest.content[:120] + ("…" if len(latest.content or "") > 120 else ""),
+            }
+        thread.preview = thread_preview
+
+    return render_template(
+        "messages/index.html",
+        threads=threads,
+        teammates=teammates,
+    )
+
+
+@main_bp.route("/messages/<int:thread_id>", methods=["GET", "POST"])
+@login_required
+def view_message_thread(thread_id: int):
+    thread = (
+        MessageThread.query.filter_by(id=thread_id, org_id=current_user.org_id)
+        .options(
+            joinedload(MessageThread.participants).joinedload(MessageParticipant.user),
+            joinedload(MessageThread.messages).joinedload(ConversationMessage.author),
+        )
+        .first_or_404()
+    )
+    participant_ids = {participant.user_id for participant in thread.participants}
+    if current_user.id not in participant_ids:
+        abort(403)
+
+    if request.method == "POST":
+        content = (request.form.get("content") or "").strip()
+        if not content:
+            flash("Message cannot be empty.", "danger")
+            return redirect(url_for("main.view_message_thread", thread_id=thread.id))
+        message = ConversationMessage(
+            org_id=current_user.org_id,
+            thread_id=thread.id,
+            author_id=current_user.id,
+            content=content,
+        )
+        thread.last_message_at = datetime.utcnow()
+        db.session.add(message)
+        db.session.add(thread)
+        db.session.commit()
+        flash("Message sent.", "success")
+        return redirect(url_for("main.view_message_thread", thread_id=thread.id))
+
+    messages = sorted(thread.messages, key=lambda msg: msg.created_at or datetime.min)
+    for message in messages:
+        message.rendered_content = _render_chat_message_html(message)
+
+    return render_template(
+        "messages/thread.html",
+        thread=thread,
+        messages=messages,
+        participants_label=", ".join(
+            _display_user_name(participant.user)
+            for participant in thread.participants
+            if participant.user
+        ),
     )
 
 

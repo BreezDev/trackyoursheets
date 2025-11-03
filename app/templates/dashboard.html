@@ -31,6 +31,28 @@
   </div>
 </div>
 
+<section class="mt-4">
+  <div class="card shadow-sm">
+    <div class="card-header bg-light d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-3">
+      <div>
+        <h2 class="h6 mb-1">Premium collected</h2>
+        <p class="text-muted small mb-0" data-premium-summary>Comparing today, week, month, quarter, and year totals.</p>
+      </div>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Premium filters">
+        <button type="button" class="btn btn-outline-primary active" data-premium-range="all">All</button>
+        <button type="button" class="btn btn-outline-primary" data-premium-range="today">Today</button>
+        <button type="button" class="btn btn-outline-primary" data-premium-range="week">This week</button>
+        <button type="button" class="btn btn-outline-primary" data-premium-range="month">This month</button>
+        <button type="button" class="btn btn-outline-primary" data-premium-range="quarter">Quarter</button>
+        <button type="button" class="btn btn-outline-primary" data-premium-range="year">Year</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <canvas id="premiumChart" height="160" data-premium-currency="{{ premium_currency }}"></canvas>
+    </div>
+  </div>
+</section>
+
 <section class="mt-5">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
@@ -58,17 +80,18 @@
       <div class="card shadow-sm h-100">
         <div class="card-body">
           <h3 class="h6">Personal notes</h3>
-          <textarea class="form-control" rows="8" data-note-scope="personal" data-workspace-id="{{ active_workspace.id }}">{{ personal_note.content if personal_note else '' }}</textarea>
-          <div class="form-text small text-muted">
-            <div>Only you can see these notes.</div>
-            <div data-note-status="personal">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="badge bg-secondary-soft text-secondary">Private</span>
+            <small class="text-muted" data-note-status="personal">
               {% if personal_note_meta %}
-              Last updated by {{ personal_note_meta.editor }} on {{ personal_note_meta.timestamp }}
+              <i class="bi bi-person"></i> {{ personal_note_meta.editor }} · <i class="bi bi-clock-history"></i> {{ personal_note_meta.timestamp }}
               {% else %}
               Not saved yet.
               {% endif %}
-            </div>
+            </small>
           </div>
+          <textarea class="form-control" rows="8" data-note-scope="personal" data-workspace-id="{{ active_workspace.id }}">{{ personal_note.content if personal_note else '' }}</textarea>
+          <div class="form-text small text-muted">Only you can see these notes.</div>
         </div>
       </div>
     </div>
@@ -76,17 +99,18 @@
       <div class="card shadow-sm h-100">
         <div class="card-body">
           <h3 class="h6">Shared workspace board</h3>
-          <textarea class="form-control" rows="8" data-note-scope="shared" data-workspace-id="{{ active_workspace.id }}">{{ shared_note.content if shared_note else '' }}</textarea>
-          <div class="form-text small text-muted">
-            <div>Visible to everyone assigned to this workspace.</div>
-            <div data-note-status="shared">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="badge bg-primary-soft text-primary">Shared</span>
+            <small class="text-muted" data-note-status="shared">
               {% if shared_note_meta %}
-              Last updated by {{ shared_note_meta.editor }} on {{ shared_note_meta.timestamp }}
+              <i class="bi bi-people"></i> {{ shared_note_meta.editor }} · <i class="bi bi-clock-history"></i> {{ shared_note_meta.timestamp }}
               {% else %}
               Not saved yet.
               {% endif %}
-            </div>
+            </small>
           </div>
+          <textarea class="form-control" rows="8" data-note-scope="shared" data-workspace-id="{{ active_workspace.id }}">{{ shared_note.content if shared_note else '' }}</textarea>
+          <div class="form-text small text-muted">Visible to everyone assigned to this workspace.</div>
         </div>
       </div>
     </div>
@@ -119,7 +143,7 @@
               <span class="fw-semibold">{{ message.author.display_name_for_ui if message.author else 'Unknown user' }}</span>
               <span class="text-muted small">{{ message.created_at.strftime('%b %d, %Y %I:%M %p') if message.created_at else '' }}</span>
             </div>
-            <div class="mt-1 small">{{ message.content }}</div>
+            <div class="mt-1 small">{{ message.rendered_content|safe }}</div>
           </li>
           {% else %}
           <li class="list-group-item text-center text-muted py-3">Start the conversation by sending the first update below.</li>
@@ -129,6 +153,21 @@
       <form id="workspaceChatForm" data-workspace-id="{{ active_workspace.id }}">
         <label class="form-label" for="workspaceChatMessage">Send a message</label>
         <textarea class="form-control" id="workspaceChatMessage" rows="2" placeholder="Share a win, ask a question, or drop a reminder" required></textarea>
+        <div class="d-flex align-items-center gap-2 mt-2">
+          <div class="btn-group dropup">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              😊 Emoji
+            </button>
+            <div class="dropdown-menu p-2 shadow-sm" style="min-width: 220px;">
+              <div class="d-flex flex-wrap gap-2" data-emoji-palette>
+                {% for emoji in ['🎉','🔥','✅','💡','🚀','📣','🙏','👏','📝','📊','🌟','⏰'] %}
+                <button type="button" class="btn btn-sm btn-light" data-emoji="{{ emoji }}">{{ emoji }}</button>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          <small class="text-muted">Tag teammates with @ and sprinkle emojis to celebrate wins.</small>
+        </div>
         <div class="d-flex justify-content-between align-items-center mt-2">
           <small class="text-muted" data-chat-status>Messages are shared with everyone assigned to this workspace.</small>
           <div class="d-flex gap-2">
@@ -230,15 +269,22 @@
 </section>
 {% endblock %}
 
-  {% block extra_scripts %}
+{% block extra_scripts %}
+  {{ super() }}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" integrity="sha384-4G8VwKCbFf8gLZZQzQ0jrISFRCGDpa2BkLomqKgkl0vvArkH5AO9M/dwZ0pniS3p" crossorigin="anonymous"></script>
+  <script>
+    window.TrackYourSheets = window.TrackYourSheets || {};
+    window.TrackYourSheets.premiumTotals = {{ premium_totals|tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const debounceTimers = {};
       const formatNoteStatus = (editor, timestamp) => {
         if (!editor || !timestamp) {
-          return 'All changes saved.';
+          return 'Not saved yet.';
         }
-        return `Last updated by ${editor} on ${timestamp}`;
+        return `<i class="bi bi-person"></i> ${editor} · <i class="bi bi-clock-history"></i> ${timestamp}`;
       };
 
       document.querySelectorAll('[data-note-scope]').forEach((textarea) => {
@@ -262,7 +308,7 @@
               .then((response) => (response.ok ? response.json() : Promise.reject(response)))
               .then((payload) => {
                 if (statusEl) {
-                  statusEl.textContent = formatNoteStatus(payload.editor, payload.updated_at_display);
+                  statusEl.innerHTML = formatNoteStatus(payload.editor, payload.updated_at_display);
                 }
               })
               .catch(() => {
@@ -323,7 +369,11 @@
 
           const body = document.createElement('div');
           body.className = 'mt-1 small';
-          body.textContent = message.content;
+          if (message.content_html) {
+            body.innerHTML = message.content_html;
+          } else {
+            body.textContent = message.content;
+          }
 
           item.append(header, body);
           chatContainer.append(item);
@@ -370,10 +420,27 @@
       }
 
       if (chatForm) {
+        const textarea = chatForm.querySelector('textarea');
+        const emojiButtons = chatForm.querySelectorAll('[data-emoji]');
+        emojiButtons.forEach((button) => {
+          button.addEventListener('click', () => {
+            const emoji = button.getAttribute('data-emoji');
+            if (!textarea || !emoji) {
+              return;
+            }
+            const start = textarea.selectionStart || textarea.value.length;
+            const end = textarea.selectionEnd || textarea.value.length;
+            const current = textarea.value;
+            textarea.value = `${current.slice(0, start)}${emoji} ${current.slice(end)}`;
+            textarea.focus();
+            const cursor = start + emoji.length + 1;
+            textarea.setSelectionRange(cursor, cursor);
+          });
+        });
+
         chatForm.addEventListener('submit', (event) => {
           event.preventDefault();
           const workspaceId = chatForm.dataset.workspaceId;
-          const textarea = chatForm.querySelector('textarea');
           if (!textarea) {
             return;
           }

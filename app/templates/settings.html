@@ -153,6 +153,54 @@
         {% endif %}
       </div>
     </div>
+    <div class="card shadow-sm mt-4">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Workspace &amp; office roles</h2>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">Review how you're mapped across the organisation. Role labels update instantly when admins adjust assignments.</p>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">Scope</th>
+                <th scope="col">Name</th>
+                <th scope="col">Role</th>
+                <th scope="col">Joined</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for membership in current_user.workspace_memberships %}
+              <tr>
+                <td><span class="badge bg-primary-soft text-primary">Workspace</span></td>
+                <td>
+                  <div class="fw-semibold">{{ membership.workspace.name if membership.workspace else 'Workspace removed' }}</div>
+                  <div class="text-muted small">{% if membership.workspace and membership.workspace.office %}{{ membership.workspace.office.name }} · {% endif %}{{ membership.workspace.organization.name if membership.workspace else '' }}</div>
+                </td>
+                <td><span class="badge bg-secondary">{{ membership.role or current_user.role }}</span></td>
+                <td class="text-muted small">{{ membership.created_at.strftime('%b %d, %Y') if membership.created_at else '—' }}</td>
+              </tr>
+              {% endfor %}
+              {% for membership in current_user.office_memberships %}
+              <tr>
+                <td><span class="badge bg-success-soft text-success">Office</span></td>
+                <td>
+                  <div class="fw-semibold">{{ membership.office.name if membership.office else 'Office removed' }}</div>
+                </td>
+                <td><span class="badge bg-secondary">{{ current_user.role }}</span></td>
+                <td class="text-muted small">{{ membership.created_at.strftime('%b %d, %Y') if membership.created_at else '—' }}</td>
+              </tr>
+              {% endfor %}
+              {% if (current_user.workspace_memberships|length == 0) and (current_user.office_memberships|length == 0) %}
+              <tr>
+                <td colspan="4" class="text-center text-muted py-3">No assignments yet. Ask an admin or HR specialist to add you to a workspace.</td>
+              </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="col-xl-8">

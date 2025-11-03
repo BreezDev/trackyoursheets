@@ -395,8 +395,8 @@ def send_import_notification(
 def send_workspace_invitation(
     recipient: str,
     inviter,
-    workspace,
-    role: str,
+    workspace=None,
+    role: str | None = None,
     *,
     temporary_password: str,
     login_url: str,
@@ -407,24 +407,53 @@ def send_workspace_invitation(
         or ""
     )
     inviter_name = inviter_display or "A teammate"
-    subject = f"You're invited to {workspace.name} on TrackYourSheets"
+    workspace_name = getattr(workspace, "name", None)
+    office_name = getattr(getattr(workspace, "office", None), "name", None)
+    if workspace_name:
+        subject = f"You're invited to {workspace_name} on TrackYourSheets"
+        intro = f"{inviter_name} invited you to join the {workspace_name} workspace."
+    else:
+        subject = "You're invited to TrackYourSheets"
+        intro = (
+            f"{inviter_name} invited you to collaborate in TrackYourSheets. "
+            "You'll be able to join offices and workspaces as soon as you sign in."
+        )
+
     html_parts = [
-        _paragraph(f"{inviter_name} invited you to join the {workspace.name} workspace."),
+        _paragraph(intro),
         _paragraph(f"Role: {role.title()}") if role else "",
-        _paragraph("Use the temporary password below to sign in and you'll be prompted to create your own."),
-        _highlight_block(temporary_password),
-        _paragraph("Keep this password safe—it expires once you update it."),
-        _button("Open TrackYourSheets", login_url),
     ]
+    if office_name:
+        html_parts.append(
+            _paragraph(
+                f"Primary office: {office_name}. You can join additional offices once you're signed in."
+            )
+        )
+    html_parts.extend(
+        [
+            _paragraph(
+                "Use the temporary password below to sign in and you'll be prompted to create your own."
+            ),
+            _highlight_block(temporary_password),
+            _paragraph("Keep this password safe—it expires once you update it."),
+            _button("Open TrackYourSheets", login_url),
+        ]
+    )
     html_parts = [part for part in html_parts if part]
     html_parts.append(
         _paragraph(
-            "Need a refresher? The in-app How-To guide walks through imports, payouts, and workspace chat."
+            "Need a refresher? Explore the in-app How-To guide for imports, payouts, workspace chat, payroll tracking, and office assignments."
         )
     )
+    text_intro = (
+        f"{inviter_name} invited you to join the {workspace_name} workspace on TrackYourSheets."
+        if workspace_name
+        else f"{inviter_name} invited you to TrackYourSheets. Join offices and workspaces after you sign in."
+    )
     text_lines = [
-        f"{inviter_name} invited you to join the {workspace.name} workspace on TrackYourSheets.",
+        text_intro,
         f"Role: {role.title()}" if role else None,
+        (f"Primary office: {office_name}" if office_name else None),
         "",  # spacer
         "Temporary password:",
         temporary_password,
@@ -456,6 +485,9 @@ def send_workspace_invitation(
         metadata={
             "workspace_id": getattr(workspace, "id", None),
             "role": role,
+            "office_id": getattr(getattr(workspace, "office", None), "id", None)
+            if workspace
+            else None,
         },
     )
 
@@ -534,7 +566,8 @@ def send_signup_alert(user, organization) -> None:
             ]
         ),
     ]
-    html_body = _email_card(subject=f"New TrackYourSheets signup: {org_name}", body_parts=html_parts)
+    html_body = _email_card(title=f"New TrackYourSheets signup: {org_name}", body_parts=html_parts)
+
     _send_email(
         recipients=recipients,
         subject=f"New TrackYourSheets signup: {org_name}",

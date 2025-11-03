@@ -265,12 +265,12 @@ def manual_entry():
         if commission is None and premium is not None and split_pct is not None:
             amount = premium * (split_pct / Decimal("100"))
 
-        category = request.form.get("category") or "raw"
-        category_normalized = _safe_str(category)
-        if category_normalized not in category_choices:
-            category_value = category_normalized or "other"
-        else:
-            category_value = category_normalized
+        category_raw = request.form.get("category") or ""
+        category_normalized = _safe_str(category_raw)
+        if not category_normalized or category_normalized not in category_choices:
+            flash("Select a revenue category configured by your admin.", "danger")
+            return redirect(url_for("imports.manual_entry"))
+        category_value = category_normalized
 
         txn = CommissionTransaction(
             org_id=current_user.org_id,

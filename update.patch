@@ -1,0 +1,3435 @@
+diff --git a/app/admin.py b/app/admin.py
+index 333c934b4ff0c7f4570daac379f9613fbd004840..1fb4ab7f953414c5078f9f1d4d8bbebb8c7fa817 100644
+--- a/app/admin.py
++++ b/app/admin.py
+@@ -1,68 +1,71 @@
+ from dotenv import load_dotenv
+ load_dotenv()
++import csv
+ import hashlib
+ import io
+ import secrets
+ from datetime import datetime, timedelta
+ from decimal import Decimal, InvalidOperation
+ 
+ from flask import (
+     Blueprint,
+     abort,
+     current_app,
+     flash,
+     redirect,
+     render_template,
+     request,
+     send_file,
+     session,
+     url_for,
+ )
+ from flask_login import current_user, login_required
+ 
+ from . import db
+ from sqlalchemy import func
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.orm import joinedload
+ 
+ from .models import (
+     APIKey,
+     Carrier,
+     CommissionRule,
+     CommissionRuleSet,
+     CommissionTransaction,
+     CommissionOverride,
+     CategoryTag,
+     Office,
+     Organization,
+     PayrollEntry,
+     PayrollRun,
+     Producer,
+     SubscriptionPlan,
+     User,
+     Workspace,
++    WorkspaceMembership,
++    OfficeMembership,
+ )
+ from .workspaces import get_accessible_workspaces, get_accessible_workspace_ids
+ from .resend_email import send_workspace_invitation
+ from .guides import get_role_guides, get_interactive_tour
+ from .marketing import build_plan_details
+ from .models import DEFAULT_NOTIFICATION_PREFERENCES
+ 
+ 
+ admin_bp = Blueprint("admin", __name__)
+ 
+ 
+ NOTIFICATION_LABELS = {
+     "signup": "New signup alerts",
+     "login": "Login alerts",
+     "workspace_invite": "Workspace invitations",
+     "plan_updates": "Plan and billing updates",
+     "workspace_updates": "Workspace membership updates",
+     "new_entries": "New import entries",
+     "general_updates": "Product news",
+ }
+ 
+ 
+ def require_admin():
+     if current_user.role not in {"owner", "admin", "agent"}:
+         flash("You do not have access to the admin panel.", "danger")
+@@ -331,53 +334,59 @@ def create_user():
+         producer = Producer(
+             org_id=org.id,
+             user_id=user.id,
+             workspace_id=target_workspace.id,
+             agent_id=target_workspace.agent_id
+             or (current_user.id if current_user.role == "agent" else None),
+             display_name=display_name or email.split("@")[0],
+         )
+         db.session.add(producer)
+         invited_workspace = target_workspace
+     elif role == "agent" and target_workspace:
+         if target_workspace.agent_id and target_workspace.agent_id != user.id:
+             flash("Workspace already has an agent assigned.", "warning")
+         existing = Workspace.query.filter_by(
+             org_id=current_user.org_id, agent_id=user.id
+         ).first()
+         if existing and existing.id != target_workspace.id:
+             existing.agent_id = None
+         target_workspace.agent_id = user.id
+         invited_workspace = target_workspace
+ 
+     if invited_workspace:
+         user.record_workspace_membership(invited_workspace, role=role)
+ 
+     db.session.commit()
+-    if invited_workspace and email:
+-        login_target = url_for(
+-            "main.dashboard", workspace_id=invited_workspace.id, _external=True
++    if email:
++        login_target = (
++            url_for(
++                "main.dashboard",
++                workspace_id=invited_workspace.id,
++                _external=True,
++            )
++            if invited_workspace
++            else url_for("main.dashboard", _external=True)
+         )
+         login_url = url_for(
+             "auth.login",
+             email=email,
+             next=login_target,
+             _external=True,
+         )
+         send_workspace_invitation(
+             recipient=email,
+             inviter=current_user,
+             workspace=invited_workspace,
+             role=role,
+             temporary_password=temporary_password,
+             login_url=login_url,
+         )
+     flash(f"{role.title()} user created.", "success")
+     return redirect(url_for("admin.index"))
+ 
+ 
+ @admin_bp.route("/users/<int:user_id>/delete", methods=["POST"])
+ def delete_user(user_id):
+     user = User.query.filter_by(id=user_id, org_id=current_user.org_id).first_or_404()
+     if user.id == current_user.id:
+         flash("You cannot delete your own account.", "danger")
+     else:
+@@ -1006,50 +1015,173 @@ def update_category(category_id: int):
+         flash("Category name cannot be empty.", "danger")
+         return redirect(url_for("admin.manage_categories"))
+ 
+     tag.name = name
+     tag.kind = kind
+     try:
+         db.session.commit()
+         flash("Category updated.", "success")
+     except IntegrityError:
+         db.session.rollback()
+         flash("Another category already uses that name.", "warning")
+     return redirect(url_for("admin.manage_categories"))
+ 
+ 
+ @admin_bp.route("/categories/<int:category_id>/delete", methods=["POST"])
+ def delete_category(category_id: int):
+     tag = CategoryTag.query.filter_by(
+         id=category_id, org_id=current_user.org_id
+     ).first_or_404()
+     db.session.delete(tag)
+     db.session.commit()
+     flash("Category removed.", "info")
+     return redirect(url_for("admin.manage_categories"))
+ 
+ 
++@admin_bp.route("/users/compensation", methods=["GET", "POST"])
++def manage_user_compensation():
++    org = Organization.query.get_or_404(current_user.org_id)
++
++    def _parse_decimal(value: str | None) -> Decimal | None:
++        if not value:
++            return None
++        try:
++            return Decimal(value)
++        except (InvalidOperation, TypeError):
++            return None
++
++    users = (
++        User.query.filter_by(org_id=org.id)
++        .options(
++            joinedload(User.workspace_memberships)
++            .joinedload(WorkspaceMembership.workspace)
++            .joinedload(Workspace.office),
++            joinedload(User.office_memberships).joinedload(OfficeMembership.office),
++        )
++        .order_by(User.first_name.asc(), User.last_name.asc(), User.email.asc())
++        .all()
++    )
++
++    if request.args.get("export") == "csv":
++        output = io.StringIO()
++        writer = csv.writer(output)
++        writer.writerow(
++            [
++                "First name",
++                "Last name",
++                "Email",
++                "Role",
++                "Base salary",
++                "Bonus plan",
++                "Bonus target",
++                "Workspaces",
++                "Offices",
++            ]
++        )
++        for user in users:
++            workspace_labels = [
++                membership.workspace.name
++                for membership in getattr(user, "workspace_memberships", [])
++                if membership.workspace
++            ]
++            office_labels = [
++                membership.office.name
++                for membership in getattr(user, "office_memberships", [])
++                if membership.office
++            ]
++            writer.writerow(
++                [
++                    user.first_name or "",
++                    user.last_name or "",
++                    user.email,
++                    user.role,
++                    user.base_salary or "",
++                    user.bonus_plan or "",
++                    user.bonus_target or "",
++                    ", ".join(workspace_labels),
++                    ", ".join(office_labels),
++                ]
++            )
++        output.seek(0)
++        return send_file(
++            io.BytesIO(output.getvalue().encode("utf-8")),
++            mimetype="text/csv",
++            as_attachment=True,
++            download_name="compensation_export.csv",
++        )
++
++    if request.method == "POST":
++        user_id = request.form.get("user_id")
++        try:
++            user_id_int = int(user_id) if user_id else None
++        except (TypeError, ValueError):
++            user_id_int = None
++        user = (
++            User.query.filter_by(id=user_id_int, org_id=org.id).first()
++            if user_id_int
++            else None
++        )
++        if not user:
++            flash("User not found.", "danger")
++            return redirect(url_for("admin.manage_user_compensation"))
++
++        base_raw = request.form.get("base_salary")
++        bonus_raw = request.form.get("bonus_target")
++        base_salary = _parse_decimal(base_raw)
++        bonus_target = _parse_decimal(bonus_raw)
++        if base_raw and base_salary is None:
++            flash("Enter a valid base salary amount.", "danger")
++            return redirect(url_for("admin.manage_user_compensation"))
++        if bonus_raw and bonus_target is None:
++            flash("Enter a valid bonus target.", "danger")
++            return redirect(url_for("admin.manage_user_compensation"))
++
++        user.update_compensation(
++            currency=request.form.get("currency") or user.compensation_currency,
++            base_salary=base_salary,
++            bonus_plan=request.form.get("bonus_plan") or None,
++            bonus_target=bonus_target,
++            notes=request.form.get("notes") or user.compensation_notes,
++        )
++        db.session.add(user)
++        db.session.commit()
++        flash("Compensation updated.", "success")
++        return redirect(url_for("admin.manage_user_compensation"))
++
++    totals = {
++        "base": sum((user.base_salary or Decimal("0")) for user in users),
++        "bonus": sum((user.bonus_target or Decimal("0")) for user in users),
++    }
++
++    return render_template(
++        "admin/users_compensation.html",
++        users=users,
++        totals=totals,
++        active_tab="users",
++    )
++
++
+ @admin_bp.route("/payroll", methods=["GET", "POST"])
+ def payroll_dashboard():
+     if not require_admin():
+         return redirect(url_for("admin.index"))
+ 
+     org = Organization.query.get_or_404(current_user.org_id)
+     today = datetime.utcnow().date()
+     default_start = today - timedelta(days=14)
+     default_end = today
+ 
+     def _parse_date(value: str | None, fallback):
+         if not value:
+             return fallback
+         try:
+             return datetime.strptime(value, "%Y-%m-%d").date()
+         except ValueError:
+             return fallback
+ 
+     date_from = _parse_date(request.values.get("date_from"), default_start)
+     date_to = _parse_date(request.values.get("date_to"), default_end)
+     if date_from > date_to:
+         date_from, date_to = date_to, date_from
+ 
+     txn_query = CommissionTransaction.query.filter_by(org_id=current_user.org_id)
+     txn_query = txn_query.filter(
+diff --git a/app/hr.py b/app/hr.py
+index c6a6c525f01fe7dd4bc460ad500a73a4d85334aa..d6621343d2f277fd3dcafedd69de5ef072767b96 100644
+--- a/app/hr.py
++++ b/app/hr.py
+@@ -1,65 +1,78 @@
+ """HR portal blueprint providing people operations tooling inside TrackYourSheets."""
+ 
+ from __future__ import annotations
+ 
+ from collections import Counter
+ from dataclasses import dataclass
+ from datetime import date, datetime, timedelta
++from decimal import Decimal, InvalidOperation
+ from typing import List, Sequence
+ 
+ from flask import (
+     Blueprint,
+     abort,
+     flash,
+     redirect,
+     render_template,
+     request,
+     url_for,
+ )
+ from flask_login import current_user, login_required
+ from sqlalchemy import or_
+ from sqlalchemy.orm import joinedload
+ 
+ from . import db
+ from .models import (
+     DEFAULT_NOTIFICATION_PREFERENCES,
+     HRComplaint,
+     HRDocument,
+     HRDocumentAcknowledgement,
+     Office,
+     OfficeMembership,
+     Organization,
+     PayrollEntry,
+     PayrollRun,
+     Producer,
+     User,
+     Workspace,
+     WorkspaceMembership,
+ )
+ 
+ 
++def _decimal_or_none(value: str | None) -> Decimal | None:
++    if value is None:
++        return None
++    stripped = value.strip()
++    if not stripped:
++        return None
++    try:
++        return Decimal(stripped)
++    except (InvalidOperation, ValueError):
++        return None
++
++
+ ACCESS_ROLES = {"owner", "admin", "agent", "bookkeeper", "hr"}
+ PUBLIC_HR_ENDPOINTS = {
+     "hr.submit_complaint",
+     "hr.complaint_submitted",
+     "hr.acknowledge_document",
+ }
+ 
+ DOCUMENT_CATEGORY_LABELS: dict[str, str] = {
+     "policy": "Policies",
+     "benefits": "Benefits",
+     "compliance": "Compliance",
+     "training": "Training",
+     "payroll": "Payroll",
+     "wellbeing": "Wellbeing",
+     "other": "Other",
+ }
+ 
+ COMPLAINT_STATUS_CHOICES: tuple[str, ...] = (
+     "open",
+     "in_progress",
+     "waiting",
+     "resolved",
+ )
+ 
+ COMPLAINT_PRIORITY_CHOICES: tuple[str, ...] = (
+@@ -713,95 +726,243 @@ def submit_complaint():
+             return redirect(url_for("hr.complaint_submitted", complaint_id=complaint.id))
+     return render_template(
+         "hr/complaint_form.html",
+         org=org,
+         priority_choices=COMPLAINT_PRIORITY_CHOICES,
+         category_options=DOCUMENT_CATEGORY_LABELS,
+     )
+ 
+ 
+ @hr_bp.route("/complaints/<int:complaint_id>/submitted")
+ def complaint_submitted(complaint_id: int):
+     org = Organization.query.get_or_404(current_user.org_id)
+     complaint = HRComplaint.query.filter_by(id=complaint_id, org_id=org.id).first_or_404()
+     if complaint.reporter_id != current_user.id and current_user.role not in ACCESS_ROLES:
+         abort(404)
+     return render_template(
+         "hr/complaint_submitted.html",
+         org=org,
+         complaint=complaint,
+     )
+ 
+ 
+ @hr_bp.route("/employees/<int:user_id>", methods=["GET", "POST"])
+ def manage_employee(user_id: int):
+     org = Organization.query.get_or_404(current_user.org_id)
+-    user = User.query.filter_by(id=user_id, org_id=org.id).first_or_404()
++    user = (
++        User.query.options(
++            joinedload(User.workspace_memberships)
++            .joinedload(WorkspaceMembership.workspace)
++            .joinedload(Workspace.office),
++            joinedload(User.office_memberships).joinedload(OfficeMembership.office),
++            joinedload(User.producer),
++        )
++        .filter_by(id=user_id, org_id=org.id)
++        .first_or_404()
++    )
+     if request.method == "POST":
+-        user.first_name = request.form.get("first_name") or None
+-        user.last_name = request.form.get("last_name") or None
+-        user.preferred_name = request.form.get("preferred_name") or None
+-        user.job_title = request.form.get("job_title") or None
+-        user.phone_number = request.form.get("phone_number") or None
+-        user.role = request.form.get("role") or user.role
+-        user.status = request.form.get("status") or user.status
+-        user.must_change_password = bool(request.form.get("must_change_password"))
+-        emergency_name = request.form.get("emergency_name")
+-        emergency_phone = request.form.get("emergency_phone")
+-        emergency_relation = request.form.get("emergency_relation")
+-        if emergency_name or emergency_phone or emergency_relation:
+-            user.emergency_contact = {
+-                "name": emergency_name,
+-                "phone": emergency_phone,
+-                "relationship": emergency_relation,
+-            }
+-        else:
+-            user.emergency_contact = None
+-        if user.producer:
+-            producer_name = request.form.get("producer_display_name") or None
+-            if producer_name:
+-                user.producer.display_name = producer_name
+-        db.session.add(user)
+-        db.session.commit()
+-        flash("Employee profile updated.", "success")
+-        return redirect(url_for("hr.manage_employee", user_id=user.id))
++        intent = request.form.get("intent") or "profile"
++        redirect_target = redirect(url_for("hr.manage_employee", user_id=user.id))
++
++        if intent == "profile":
++            user.first_name = request.form.get("first_name") or None
++            user.last_name = request.form.get("last_name") or None
++            user.preferred_name = request.form.get("preferred_name") or None
++            user.job_title = request.form.get("job_title") or None
++            user.phone_number = request.form.get("phone_number") or None
++            user.role = request.form.get("role") or user.role
++            user.status = request.form.get("status") or user.status
++            user.must_change_password = bool(request.form.get("must_change_password"))
++            emergency_name = request.form.get("emergency_name")
++            emergency_phone = request.form.get("emergency_phone")
++            emergency_relation = request.form.get("emergency_relation")
++            if emergency_name or emergency_phone or emergency_relation:
++                user.emergency_contact = {
++                    "name": emergency_name,
++                    "phone": emergency_phone,
++                    "relationship": emergency_relation,
++                }
++            else:
++                user.emergency_contact = None
++            if user.producer:
++                producer_name = request.form.get("producer_display_name") or None
++                if producer_name:
++                    user.producer.display_name = producer_name
++            db.session.add(user)
++            db.session.commit()
++            flash("Employee profile updated.", "success")
++            return redirect_target
++
++        if intent == "compensation":
++            currency = request.form.get("compensation_currency") or user.compensation_currency
++            base_salary_raw = request.form.get("base_salary")
++            bonus_target_raw = request.form.get("bonus_target")
++            base_salary = _decimal_or_none(base_salary_raw)
++            bonus_target = _decimal_or_none(bonus_target_raw)
++            if base_salary_raw and base_salary is None:
++                flash("Enter a valid base salary amount (numbers only).", "danger")
++                return redirect_target
++            if bonus_target_raw and bonus_target is None:
++                flash("Enter a valid bonus target (numbers only).", "danger")
++                return redirect_target
++            user.update_compensation(
++                currency=currency,
++                base_salary=base_salary,
++                bonus_plan=request.form.get("bonus_plan") or None,
++                bonus_target=bonus_target,
++                notes=request.form.get("compensation_notes"),
++            )
++            db.session.add(user)
++            db.session.commit()
++            flash("Compensation profile updated.", "success")
++            return redirect_target
++
++        if intent == "add_workspace_membership":
++            workspace_id_raw = request.form.get("workspace_id")
++            try:
++                workspace_id = int(workspace_id_raw) if workspace_id_raw else None
++            except (TypeError, ValueError):
++                workspace_id = None
++            if not workspace_id:
++                flash("Select a workspace to assign.", "danger")
++                return redirect_target
++            workspace = Workspace.query.filter_by(id=workspace_id, org_id=org.id).first()
++            if not workspace:
++                flash("Workspace not found.", "danger")
++                return redirect_target
++            role_value = request.form.get("workspace_role") or None
++            user.record_workspace_membership(workspace, role=role_value)
++            db.session.commit()
++            flash(
++                f"Added to {workspace.name} with role {role_value or user.role}.",
++                "success",
++            )
++            return redirect_target
++
++        if intent == "remove_workspace_membership":
++            membership_id_raw = request.form.get("membership_id")
++            try:
++                membership_id = int(membership_id_raw) if membership_id_raw else None
++            except (TypeError, ValueError):
++                membership_id = None
++            if not membership_id:
++                flash("Select a workspace assignment to remove.", "danger")
++                return redirect_target
++            membership = WorkspaceMembership.query.filter_by(
++                id=membership_id,
++                org_id=org.id,
++                user_id=user.id,
++            ).first()
++            if not membership:
++                flash("Workspace assignment not found.", "warning")
++                return redirect_target
++            if (
++                user.producer
++                and user.producer.workspace_id == membership.workspace_id
++            ):
++                flash("Cannot remove a producer from their primary workspace.", "danger")
++                return redirect_target
++            if (
++                user.role == "agent"
++                and getattr(user, "managed_workspace", None)
++                and user.managed_workspace.id == membership.workspace_id
++            ):
++                flash("Agents must remain assigned to their managed workspace.", "danger")
++                return redirect_target
++            db.session.delete(membership)
++            db.session.commit()
++            flash("Workspace assignment removed.", "info")
++            return redirect_target
++
++        if intent == "add_office_membership":
++            office_id_raw = request.form.get("office_id")
++            try:
++                office_id = int(office_id_raw) if office_id_raw else None
++            except (TypeError, ValueError):
++                office_id = None
++            if not office_id:
++                flash("Select an office to assign.", "danger")
++                return redirect_target
++            office = Office.query.filter_by(id=office_id, org_id=org.id).first()
++            if not office:
++                flash("Office not found.", "danger")
++                return redirect_target
++            user.record_office_membership(office)
++            db.session.commit()
++            flash(f"Added to {office.name} office.", "success")
++            return redirect_target
++
++        if intent == "remove_office_membership":
++            membership_id_raw = request.form.get("membership_id")
++            try:
++                membership_id = int(membership_id_raw) if membership_id_raw else None
++            except (TypeError, ValueError):
++                membership_id = None
++            if not membership_id:
++                flash("Select an office assignment to remove.", "danger")
++                return redirect_target
++            membership = OfficeMembership.query.filter_by(
++                id=membership_id,
++                org_id=org.id,
++                user_id=user.id,
++            ).first()
++            if not membership:
++                flash("Office assignment not found.", "warning")
++                return redirect_target
++            db.session.delete(membership)
++            db.session.commit()
++            flash("Office assignment removed.", "info")
++            return redirect_target
+ 
+     acknowledgements = (
+         HRDocumentAcknowledgement.query.filter_by(org_id=org.id, user_id=user.id)
+         .options(joinedload(HRDocumentAcknowledgement.document))
+         .order_by(HRDocumentAcknowledgement.acknowledged_at.desc())
+         .all()
+     )
+     reported_complaints = (
+         HRComplaint.query.filter_by(org_id=org.id, reporter_id=user.id)
+         .order_by(HRComplaint.created_at.desc())
+         .all()
+     )
+     assigned_complaints = (
+         HRComplaint.query.filter_by(org_id=org.id, assigned_to_id=user.id)
+         .order_by(HRComplaint.created_at.desc())
+         .all()
+     )
+     payroll_query = PayrollEntry.query.filter_by(org_id=org.id)
+     if user.producer:
+         payroll_query = payroll_query.filter(
+             or_(PayrollEntry.user_id == user.id, PayrollEntry.producer_id == user.producer.id)
+         )
+     else:
+         payroll_query = payroll_query.filter(PayrollEntry.user_id == user.id)
+     payroll_history = (
+         payroll_query.options(joinedload(PayrollEntry.payroll_run))
+         .order_by(PayrollEntry.created_at.desc())
+         .limit(25)
+         .all()
+     )
+ 
++    all_workspaces = (
++        Workspace.query.filter_by(org_id=org.id)
++        .order_by(Workspace.name.asc())
++        .all()
++    )
++    all_offices = (
++        Office.query.filter_by(org_id=org.id)
++        .order_by(Office.name.asc())
++        .all()
++    )
++
+     return render_template(
+         "hr/edit_user.html",
+         org=org,
+         user=user,
+         acknowledgements=acknowledgements,
+         reported_complaints=reported_complaints,
+         assigned_complaints=assigned_complaints,
+         payroll_history=payroll_history,
++        all_workspaces=all_workspaces,
++        all_offices=all_offices,
+         active_tab="directory",
+     )
+diff --git a/app/imports.py b/app/imports.py
+index 6a6e9926d8df5155fb2f353dfc70ac0d85ff5f11..d74320dbc9c76abcbc59fecb05a2e8bc40bec37e 100644
+--- a/app/imports.py
++++ b/app/imports.py
+@@ -243,56 +243,56 @@ def manual_entry():
+                     org_id=current_user.org_id,
+                 ).first()
+             if producer and producer.workspace_id != workspace.id:
+                 flash("Selected producer does not belong to this workspace.", "danger")
+                 return redirect(url_for("imports.manual_entry"))
+ 
+         txn_date_raw = request.form.get("txn_date")
+         if txn_date_raw:
+             try:
+                 txn_date = datetime.strptime(txn_date_raw, "%Y-%m-%d").date()
+             except ValueError:
+                 txn_date = datetime.utcnow().date()
+         else:
+             txn_date = datetime.utcnow().date()
+ 
+         premium = _decimal_or_none(request.form.get("premium"))
+         commission = _decimal_or_none(request.form.get("commission"))
+         split_pct = _decimal_or_none(request.form.get("split_pct"))
+         if split_pct is None and producer and producer.default_split is not None:
+             split_pct = _decimal_or_none(producer.default_split)
+ 
+         amount = _calculate_amount(commission, split_pct, {}) if commission is not None else None
+         if commission is None and premium is not None and split_pct is not None:
+             amount = premium * (split_pct / Decimal("100"))
+ 
+-        category = request.form.get("category") or "raw"
+-        category_normalized = _safe_str(category)
+-        if category_normalized not in category_choices:
+-            category_value = category_normalized or "other"
+-        else:
+-            category_value = category_normalized
++        category_raw = request.form.get("category") or ""
++        category_normalized = _safe_str(category_raw)
++        if not category_normalized or category_normalized not in category_choices:
++            flash("Select a revenue category configured by your admin.", "danger")
++            return redirect(url_for("imports.manual_entry"))
++        category_value = category_normalized
+ 
+         txn = CommissionTransaction(
+             org_id=current_user.org_id,
+             workspace_id=workspace.id,
+             producer_id=producer.id if producer else None,
+             txn_date=txn_date,
+             premium=premium,
+             commission=commission,
+             basis=request.form.get("basis") or "manual",
+             split_pct=split_pct,
+             amount=amount,
+             category=category_value,
+             carrier_name=carrier.name if carrier else carrier_name,
+             product_type=request.form.get("product_type") or None,
+             source="manual",
+             status="recorded",
+             created_by=current_user.id,
+             notes=request.form.get("notes") or None,
+         )
+         db.session.add(txn)
+         db.session.commit()
+ 
+         flash("Manual commission recorded.", "success")
+         return redirect(url_for("reports.overview"))
+ 
+diff --git a/app/main.py b/app/main.py
+index 7deb5d7b4d4443311301973d6a0ea271594ed420..242715503fff128df49c936ab82738f1cc139a2d 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,91 +1,100 @@
+ from dotenv import load_dotenv
+ load_dotenv()
+-from datetime import datetime, timedelta
++import re
++from datetime import date, datetime, timedelta
+ from typing import Sequence
+ 
+ from flask import (
+     Blueprint,
+     current_app,
+     render_template,
+     request,
+     jsonify,
+     abort,
+     url_for,
+     flash,
+     redirect,
+     session,
+ )
+ from flask_login import current_user, login_required
+ 
+ from sqlalchemy import func, or_
++from sqlalchemy.orm import joinedload
+ 
+ from werkzeug.security import generate_password_hash
+ 
+ from werkzeug.routing import BuildError
++from markupsafe import Markup, escape
+ 
+ from .models import (
+     AuditLog,
+     CommissionTransaction,
+     ImportBatch,
+     Workspace,
+     WorkspaceNote,
+     WorkspaceChatMessage,
++    MessageThread,
++    MessageParticipant,
++    ConversationMessage,
+     Organization,
+     SubscriptionPlan,
+     Subscription,
+     Coupon,
+     User,
+     Producer,
+     Carrier,
+     DEFAULT_NOTIFICATION_PREFERENCES,
+ )
+ from .guides import get_role_guides, get_interactive_tour
+ from .workspaces import get_accessible_workspace_ids, get_accessible_workspaces, user_can_access_workspace
+ from . import db
+ from .resend_email import (
+     send_notification_email,
+     send_two_factor_code_email,
+     send_workspace_chat_notification,
+     send_workspace_update_notification,
+ )
+ from .marketing import (
+     build_plan_details,
+     marketing_highlights,
+     marketing_integrations,
+     marketing_metrics,
+     marketing_operations_pillars,
+     marketing_personas,
+     marketing_testimonials,
+     marketing_timeline,
+     marketing_top_questions,
+ )
+ 
+ 
+ main_bp = Blueprint("main", __name__)
+ 
+ 
++MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_.+-]+)")
++
++
+ def _display_user_name(user):
+     if not user:
+         return "Unknown user"
+     if hasattr(user, "display_name_for_ui"):
+         return user.display_name_for_ui
+     if getattr(user, "email", None):
+         return user.email
+     return "Unknown user"
+ 
+ 
+ def _format_timestamp(value):
+     if not value:
+         return None
+     return value.strftime("%b %d, %Y %I:%M %p")
+ 
+ 
+ def _note_meta(note):
+     if not note:
+         return None
+     return {
+         "editor": _display_user_name(note.owner),
+         "timestamp": _format_timestamp(note.updated_at),
+         "iso": note.updated_at.isoformat() if note.updated_at else None,
+     }
+ 
+@@ -116,102 +125,188 @@ def _billing_contacts(organization) -> list[str]:
+ 
+ 
+ def _workspace_recipients(workspace, *, preference: str, exclude_user_id: int | None = None) -> list[str]:
+     if not workspace or not getattr(workspace, "organization", None):
+         return []
+     recipients: list[str] = []
+     for member in workspace.organization.users:
+         if member.id == exclude_user_id:
+             continue
+         if not getattr(member, "email", None):
+             continue
+         if not member.wants_notification(preference):
+             continue
+         recipients.append(member.email)
+     agent = getattr(workspace, "agent", None)
+     if agent and agent.id != exclude_user_id and getattr(agent, "email", None):
+         if agent.wants_notification(preference):
+             recipients.append(agent.email)
+     return _dedupe_emails(recipients)
+ 
+ 
+ def _serialize_chat_message(message: WorkspaceChatMessage) -> dict:
+     return {
+         "id": message.id,
+         "content": message.content,
++        "content_html": str(_render_chat_message_html(message)),
+         "author": _display_user_name(message.author),
+         "created_at": message.created_at.isoformat() if message.created_at else None,
+         "created_at_display": _format_timestamp(message.created_at),
+     }
+ 
+ 
++def _calculate_premium_totals(
++    org_id: int, workspace_ids: Sequence[int] | None
++) -> dict[str, float]:
++    today = date.today()
++    start_of_week = today - timedelta(days=today.weekday())
++    start_of_month = today.replace(day=1)
++    quarter_index = (today.month - 1) // 3
++    start_of_quarter = date(today.year, quarter_index * 3 + 1, 1)
++    start_of_year = date(today.year, 1, 1)
++
++    def _sum_since(start_date: date | None) -> float:
++        query = CommissionTransaction.query.filter_by(org_id=org_id)
++        if workspace_ids:
++            query = query.filter(
++                or_(
++                    CommissionTransaction.workspace_id.in_(workspace_ids),
++                    CommissionTransaction.batch.has(
++                        ImportBatch.workspace_id.in_(workspace_ids)
++                    ),
++                )
++            )
++        if start_date:
++            query = query.filter(CommissionTransaction.txn_date >= start_date)
++        total = (
++            query.with_entities(
++                func.coalesce(func.sum(CommissionTransaction.premium), 0)
++            ).scalar()
++            or 0
++        )
++        return float(total)
++
++    return {
++        "today": _sum_since(today),
++        "week": _sum_since(start_of_week),
++        "month": _sum_since(start_of_month),
++        "quarter": _sum_since(start_of_quarter),
++        "year": _sum_since(start_of_year),
++    }
++
++
++def _render_chat_message_html(message: WorkspaceChatMessage) -> Markup:
++    content = message.content or ""
++    parts: list[Markup] = []
++    last_index = 0
++    for match in MENTION_PATTERN.finditer(content):
++        start, end = match.span()
++        if start > last_index:
++            parts.append(escape(content[last_index:start]))
++        handle = escape(match.group(1))
++        parts.append(
++            Markup(
++                f'<span class="badge rounded-pill bg-primary-soft text-primary">@{handle}</span>'
++            )
++        )
++        last_index = end
++    if last_index < len(content):
++        parts.append(escape(content[last_index:]))
++    if not parts:
++        parts.append(escape(content))
++    combined = Markup("").join(parts)
++    return Markup(str(combined).replace("\n", "<br>"))
++
++
+ def _audit_actor_label(actor, actor_id: int | None) -> str:
+     if actor:
+         return _display_user_name(actor)
+     if actor_id is None:
+         return "System automation"
+     return f"User #{actor_id}"
+ 
+ 
+ def _serialize_audit_event(event: AuditLog, actor_lookup: dict[int, User]) -> dict:
+     actor = actor_lookup.get(event.actor_user_id) if actor_lookup else None
+     return {
+         "id": event.id,
+         "action": event.action,
+         "entity": event.entity,
+         "entity_id": event.entity_id,
+         "actor_display": _audit_actor_label(actor, event.actor_user_id),
+         "timestamp": event.ts,
+         "timestamp_display": _format_timestamp(event.ts),
+         "before": event.before,
+         "after": event.after,
+     }
+ 
+ 
+ @main_bp.route("/")
+ def landing():
+     plans = SubscriptionPlan.query.order_by(SubscriptionPlan.tier.asc()).all()
+     plan_details = build_plan_details(plans)
+ 
+     try:
+         api_guide_url = url_for("main.api_guide")
+     except BuildError:
+         api_guide_url = url_for("main.guide")
+ 
++    resource_links = [
++        {
++            "title": "Role-based onboarding guide",
++            "description": "Step-by-step directions for admins, HR, finance, and producers—accessible anytime in-app.",
++            "href": url_for("main.guide"),
++            "icon": "bi-journal-text",
++        },
++        {
++            "title": "Team signup Excel template",
++            "description": "Collect emails, roles, base salaries, and workspace assignments in one spreadsheet during onboarding.",
++            "href": url_for("static", filename="downloads/signup_template.xlsx"),
++            "icon": "bi-file-earmark-spreadsheet",
++        },
++        {
++            "title": "Messaging & collaboration tips",
++            "description": "Use workspace chat, private conversations, and shared boards to keep every office aligned.",
++            "href": url_for("main.messages_home"),
++            "icon": "bi-chat-dots",
++        },
++    ]
++
+     return render_template(
+         "landing.html",
+         plan_details=plan_details,
+         hero_metrics=marketing_metrics(),
+         feature_sections=marketing_highlights(),
+         operations_pillars=marketing_operations_pillars(),
+         persona_sections=marketing_personas(),
+         integrations=marketing_integrations(),
+         testimonials=marketing_testimonials(),
+         top_questions=marketing_top_questions(),
+         timeline_steps=marketing_timeline(),
+         api_guide_url=api_guide_url,
+         show_dashboard_link=current_user.is_authenticated,
++        resource_links=resource_links,
+     )
+ 
+ 
+ @main_bp.route("/contact")
+ def contact():
+     return render_template("contact.html")
+ 
+ 
+ @main_bp.route("/api-guide")
+ def api_guide():
+     api_sections = [
+         {
+             "title": "Authentication & security",
+             "bullets": [
+                 "Use OAuth 2.1 client credentials to request access tokens from `/oauth/token` with scopes like `workspaces.read` and `payroll.read`.",
+                 "Rotate secrets quarterly via `/oauth/rotate` — the previous secret remains valid for 24 hours to avoid downtime.",
+                 "Verify webhook signatures with the `X-TrackYourSheets-Signature` header (HMAC-SHA256) before processing events.",
+                 "Respect per-organisation rate limits of 1,000 requests/minute and use the `Idempotency-Key` header for retries.",
+             ],
+         },
+         {
+             "title": "Core REST endpoints",
+             "bullets": [
+                 "`GET /v1/workspaces` and `POST /v1/workspaces` for creating and managing agent pods.",
+                 "`GET /v1/payroll/runs` plus `POST /v1/payroll/runs/{id}/approve` for end-to-end payroll automation.",
+@@ -312,96 +407,105 @@ def dashboard():
+         txns_total = 0
+     audit_query = AuditLog.query.filter_by(org_id=org_id)
+     audit_total = audit_query.count()
+     recent_audit_events = (
+         audit_query.order_by(AuditLog.ts.desc()).limit(5).all()
+     )
+     actor_ids = {
+         event.actor_user_id
+         for event in recent_audit_events
+         if event.actor_user_id is not None
+     }
+     actor_lookup: dict[int, User] = {}
+     if actor_ids:
+         actor_lookup = {
+             user.id: user
+             for user in User.query.filter(User.id.in_(actor_ids)).all()
+         }
+     audit_entries = [
+         _serialize_audit_event(event, actor_lookup)
+         for event in recent_audit_events
+     ]
+     personal_note = None
+     shared_note = None
+     chat_messages = []
+     chat_payload = []
++    premium_totals = _calculate_premium_totals(
++        org_id,
++        list(workspace_ids) if workspace_ids else None,
++    )
+     if active_workspace:
+         personal_note = (
+             WorkspaceNote.query.filter_by(
+                 org_id=current_user.org_id,
+                 workspace_id=active_workspace.id,
+                 owner_id=current_user.id,
+                 scope="personal",
+             )
+             .order_by(WorkspaceNote.updated_at.desc())
+             .first()
+         )
+         shared_note = (
+             WorkspaceNote.query.filter_by(
+                 org_id=current_user.org_id,
+                 workspace_id=active_workspace.id,
+                 scope="shared",
+             )
+             .order_by(WorkspaceNote.updated_at.desc())
+             .first()
+         )
+         chat_query = (
+             WorkspaceChatMessage.query.filter_by(
+                 org_id=current_user.org_id,
+                 workspace_id=active_workspace.id,
+             )
+             .order_by(WorkspaceChatMessage.created_at.desc())
+             .limit(50)
+             .all()
+         )
+         chat_messages = list(reversed(chat_query))
++        for message in chat_messages:
++            message.rendered_content = _render_chat_message_html(message)
+         chat_payload = [_serialize_chat_message(message) for message in chat_messages]
+ 
+     return render_template(
+         "dashboard.html",
+         imports=imports,
+         txns_total=txns_total,
+         audit_entries=audit_entries,
+         audit_total=audit_total,
+         workspaces=workspaces,
+         active_workspace=active_workspace,
+         personal_note=personal_note,
+         shared_note=shared_note,
+         personal_note_meta=_note_meta(personal_note),
+         shared_note_meta=_note_meta(shared_note),
+         chat_messages=chat_messages,
+         chat_messages_payload=chat_payload,
++        premium_totals=premium_totals,
++        premium_currency=getattr(current_user, "compensation_currency", None)
++        or "USD",
+     )
+ 
+ 
+ @main_bp.route("/workspaces/switch", methods=["POST"])
+ @login_required
+ def switch_workspace():
+     workspace_id = request.form.get("workspace_id", type=int)
+     next_url = request.form.get("next") or request.referrer or url_for("main.dashboard")
+     if workspace_id and user_can_access_workspace(current_user, workspace_id):
+         session["active_workspace_id"] = workspace_id
+     else:
+         flash("You do not have access to that workspace.", "danger")
+     return redirect(next_url)
+ 
+ 
+ @main_bp.route("/workspaces/join", methods=["POST"])
+ @login_required
+ def join_workspace():
+     workspace_id = request.form.get("workspace_id", type=int)
+     next_url = request.form.get("next") or url_for("main.settings")
+     if not workspace_id:
+         flash("Select a workspace to join.", "danger")
+         return redirect(next_url)
+     workspace = Workspace.query.filter_by(id=workspace_id, org_id=current_user.org_id).first()
+     if not workspace:
+@@ -834,50 +938,215 @@ def settings():
+     return render_template(
+         "settings.html",
+         plans=plans,
+         organization=org,
+         subscription=subscription,
+         can_manage_plan=can_manage_plan,
+         usage_snapshot=usage_snapshot,
+         seat_limit=included_seats,
+         seats_remaining=seats_remaining,
+         plan_details_map=plan_details_map,
+         current_plan_detail=current_plan_detail,
+         plan_limits=plan_limits,
+         stripe_enabled=stripe_enabled,
+         stripe_mode=stripe_mode,
+         stripe_publishable_key=stripe_publishable_key,
+         notification_options=DEFAULT_NOTIFICATION_PREFERENCES,
+         user_notifications=current_user.notification_preferences
+         or DEFAULT_NOTIFICATION_PREFERENCES,
+         two_factor_enabled=current_user.two_factor_enabled,
+         accessible_workspaces=accessible_workspaces,
+         joinable_workspaces=joinable_workspaces,
+         extra_seat_price=extra_seat_price,
+     )
+ 
+ 
++@main_bp.route("/messages", methods=["GET", "POST"])
++@login_required
++def messages_home():
++    org = Organization.query.get_or_404(current_user.org_id)
++    teammates = (
++        User.query.filter_by(org_id=org.id)
++        .filter(User.id != current_user.id)
++        .order_by(User.first_name.asc(), User.last_name.asc())
++        .all()
++    )
++
++    if request.method == "POST":
++        participant_ids = {
++            current_user.id,
++            *{
++                int(value)
++                for value in request.form.getlist("participants")
++                if value.isdigit()
++            },
++        }
++        participant_users = (
++            User.query.filter(User.id.in_(participant_ids))
++            .filter_by(org_id=org.id)
++            .all()
++        )
++        if len(participant_users) != len(participant_ids):
++            flash("Select teammates from your organisation.", "danger")
++            return redirect(url_for("main.messages_home"))
++
++        is_group = len(participant_users) > 2
++        name = (request.form.get("name") or "").strip()
++        if not name:
++            if is_group:
++                name = ", ".join(
++                    sorted(
++                        {user.full_name or user.email for user in participant_users}
++                    )
++                )
++            else:
++                other = next(user for user in participant_users if user.id != current_user.id)
++                name = other.full_name or other.email
++
++        initial_message = (request.form.get("message") or "").strip()
++
++        thread = MessageThread(
++            org_id=org.id,
++            name=name,
++            is_group=is_group,
++            created_by_id=current_user.id,
++            last_message_at=datetime.utcnow() if initial_message else None,
++        )
++        db.session.add(thread)
++        db.session.flush()
++
++        for user in participant_users:
++            participant = MessageParticipant(
++                org_id=org.id,
++                thread_id=thread.id,
++                user_id=user.id,
++                role="owner" if user.id == current_user.id else "member",
++            )
++            db.session.add(participant)
++
++        if initial_message:
++            message = ConversationMessage(
++                org_id=org.id,
++                thread_id=thread.id,
++                author_id=current_user.id,
++                content=initial_message,
++            )
++            db.session.add(message)
++
++        db.session.commit()
++        flash("Conversation created.", "success")
++        return redirect(url_for("main.view_message_thread", thread_id=thread.id))
++
++    participant_thread_ids = (
++        MessageParticipant.query.with_entities(MessageParticipant.thread_id)
++        .filter_by(org_id=org.id, user_id=current_user.id)
++        .subquery()
++    )
++    threads = (
++        MessageThread.query.filter_by(org_id=org.id)
++        .filter(MessageThread.id.in_(participant_thread_ids))
++        .options(
++            joinedload(MessageThread.participants).joinedload(MessageParticipant.user),
++            joinedload(MessageThread.messages).joinedload(ConversationMessage.author),
++        )
++        .order_by(MessageThread.last_message_at.desc().nullslast(), MessageThread.created_at.desc())
++        .all()
++    )
++
++    for thread in threads:
++        participant_names = [
++            _display_user_name(participant.user)
++            for participant in thread.participants
++            if participant.user_id != current_user.id and participant.user
++        ]
++        thread.display_participants = participant_names or ["Just you"]
++        thread_preview = None
++        if thread.messages:
++            latest = max(thread.messages, key=lambda msg: msg.created_at or datetime.min)
++            thread_preview = {
++                "author": _display_user_name(latest.author),
++                "timestamp": latest.created_at,
++                "body": latest.content[:120] + ("…" if len(latest.content or "") > 120 else ""),
++            }
++        thread.preview = thread_preview
++
++    return render_template(
++        "messages/index.html",
++        threads=threads,
++        teammates=teammates,
++    )
++
++
++@main_bp.route("/messages/<int:thread_id>", methods=["GET", "POST"])
++@login_required
++def view_message_thread(thread_id: int):
++    thread = (
++        MessageThread.query.filter_by(id=thread_id, org_id=current_user.org_id)
++        .options(
++            joinedload(MessageThread.participants).joinedload(MessageParticipant.user),
++            joinedload(MessageThread.messages).joinedload(ConversationMessage.author),
++        )
++        .first_or_404()
++    )
++    participant_ids = {participant.user_id for participant in thread.participants}
++    if current_user.id not in participant_ids:
++        abort(403)
++
++    if request.method == "POST":
++        content = (request.form.get("content") or "").strip()
++        if not content:
++            flash("Message cannot be empty.", "danger")
++            return redirect(url_for("main.view_message_thread", thread_id=thread.id))
++        message = ConversationMessage(
++            org_id=current_user.org_id,
++            thread_id=thread.id,
++            author_id=current_user.id,
++            content=content,
++        )
++        thread.last_message_at = datetime.utcnow()
++        db.session.add(message)
++        db.session.add(thread)
++        db.session.commit()
++        flash("Message sent.", "success")
++        return redirect(url_for("main.view_message_thread", thread_id=thread.id))
++
++    messages = sorted(thread.messages, key=lambda msg: msg.created_at or datetime.min)
++    for message in messages:
++        message.rendered_content = _render_chat_message_html(message)
++
++    return render_template(
++        "messages/thread.html",
++        thread=thread,
++        messages=messages,
++        participants_label=", ".join(
++            _display_user_name(participant.user)
++            for participant in thread.participants
++            if participant.user
++        ),
++    )
++
++
+ @main_bp.route("/billing/portal", methods=["POST"])
+ @login_required
+ def open_billing_portal():
+     if current_user.role not in {"owner", "admin", "agent"}:
+         abort(403)
+     org = Organization.query.get_or_404(current_user.org_id)
+     stripe_gateway = current_app.extensions.get("stripe_gateway")
+     if not stripe_gateway or not getattr(stripe_gateway, "is_configured", False):
+         flash("Stripe billing portal is not configured.", "warning")
+         return redirect(url_for("main.settings"))
+     try:
+         portal_url = stripe_gateway.create_billing_portal_session(
+             organization=org,
+             return_url=url_for("main.settings", _external=True),
+         )
+     except Exception as exc:  # pragma: no cover - Stripe errors logged only
+         current_app.logger.error("Stripe billing portal error", exc_info=exc)
+         flash(
+             "We couldn't open the Stripe billing portal. Please try again or email contact@trackyoursheets.com.",
+             "danger",
+         )
+         return redirect(url_for("main.settings"))
+     return redirect(portal_url)
+ 
+ 
+diff --git a/app/marketing.py b/app/marketing.py
+index cffc4658f22991a128596f86eab625e0d3c92179..99534168aedadd305e2b05eb596f32ab73f82839 100644
+--- a/app/marketing.py
++++ b/app/marketing.py
+@@ -268,26 +268,34 @@ def marketing_testimonials() -> list[dict[str, str]]:
+             "quote": "Implementation was shockingly smooth. The automation playbooks mirrored our compliance checklist out of the box.",
+             "name": "Priya Desai",
+             "role": "Director of Operations, Northwind Mutual",
+         },
+     ]
+ 
+ 
+ def marketing_top_questions() -> list[dict[str, str]]:
+     return [
+         {
+             "question": "How quickly can we get started?",
+             "answer": "Most agencies import their first carrier statements within 48 hours. Guided onboarding and a migration specialist help you map data, configure roles, and launch workspaces step-by-step.",
+         },
+         {
+             "question": "What security certifications do you maintain?",
+             "answer": "TrackYourSheets follows SOC 2 Type II controls, enforces SSO with SAML or OAuth, and provides full audit trails for every data change. Data is encrypted at rest with AES-256 and in transit with TLS 1.3.",
+         },
+         {
+             "question": "Can we connect our existing BI stack?",
+             "answer": "Yes. Use the REST or GraphQL API, schedule warehouse syncs to Snowflake or BigQuery, and stream webhook events for payroll approvals, HR escalations, and commission updates.",
+         },
+         {
+             "question": "Do you support multi-entity agencies?",
+             "answer": "Workspaces, role-based permissions, and consolidated reporting make it easy to manage multiple offices or brands while preserving autonomy and data privacy.",
+         },
++        {
++            "question": "Can teammates collaborate across multiple offices and workspaces?",
++            "answer": "Yes. Assign any user to as many offices and workspaces as they need. TrackYourSheets records their role per location so permissions, chat visibility, and payroll access stay accurate.",
++        },
++        {
++            "question": "How do payroll and compensation exports work?",
++            "answer": "Capture base salaries, bonuses, and draws for every teammate—not just producers. Payroll runs consolidate manual and automated commissions with exportable CSVs for finance systems.",
++        },
+     ]
+diff --git a/app/models.py b/app/models.py
+index 211e549c392c16aa56809540d9afba23291db168..f6336e3d82081642e7c35b671ec767f60adaaf9c 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -27,50 +27,51 @@ class TimestampMixin:
+ class Organization(TimestampMixin, db.Model):
+     __tablename__ = "organizations"
+ 
+     id = db.Column(db.Integer, primary_key=True)
+     name = db.Column(db.String(120), nullable=False)
+     plan_id = db.Column(db.Integer, db.ForeignKey("subscription_plans.id"))
+     stripe_customer_id = db.Column(db.String(120))
+     trial_ends_at = db.Column(db.DateTime)
+ 
+     users = db.relationship("User", backref="organization", lazy=True)
+     offices = db.relationship("Office", backref="organization", lazy=True)
+     workspaces = db.relationship("Workspace", backref="organization", lazy=True)
+     carriers = db.relationship("Carrier", backref="organization", lazy=True)
+     producers = db.relationship("Producer", backref="organization", lazy=True)
+     customers = db.relationship("Customer", backref="organization", lazy=True)
+     policies = db.relationship("Policy", backref="organization", lazy=True)
+     rule_sets = db.relationship("CommissionRuleSet", backref="organization", lazy=True)
+     import_batches = db.relationship("ImportBatch", backref="organization", lazy=True)
+     commission_transactions = db.relationship("CommissionTransaction", backref="organization", lazy=True)
+     payout_statements = db.relationship("PayoutStatement", backref="organization", lazy=True)
+     categories = db.relationship("CategoryTag", backref="organization", lazy=True)
+     subscriptions = db.relationship("Subscription", backref="organization", lazy=True)
+     hr_documents = db.relationship("HRDocument", backref="organization", lazy=True)
+     hr_complaints = db.relationship("HRComplaint", backref="organization", lazy=True)
+     payroll_runs = db.relationship("PayrollRun", backref="organization", lazy=True)
++    message_threads = db.relationship("MessageThread", backref="organization", lazy=True)
+ 
+ 
+ class SubscriptionPlan(db.Model):
+     __tablename__ = "subscription_plans"
+ 
+     id = db.Column(db.Integer, primary_key=True)
+     name = db.Column(db.String(80), nullable=False)
+     tier = db.Column(db.Integer, nullable=False, default=0)
+     price_per_user = db.Column(db.Numeric(10, 2), nullable=False)
+     included_users = db.Column(db.Integer)
+     extra_user_price = db.Column(db.Numeric(10, 2))
+     max_users = db.Column(db.Integer, nullable=False)
+     max_carriers = db.Column(db.Integer, nullable=False)
+     max_rows_per_month = db.Column(db.Integer, nullable=False)
+     includes_quickbooks = db.Column(db.Boolean, default=False)
+     includes_producer_portal = db.Column(db.Boolean, default=False)
+     includes_api = db.Column(db.Boolean, default=False)
+ 
+     organizations = db.relationship("Organization", backref="plan", lazy=True)
+ 
+ 
+ class Office(TimestampMixin, db.Model):
+     __tablename__ = "offices"
+ 
+     id = db.Column(db.Integer, primary_key=True)
+@@ -125,50 +126,55 @@ class WorkspaceMembership(TimestampMixin, db.Model):
+     id = db.Column(db.Integer, primary_key=True)
+     org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+     workspace_id = db.Column(
+         db.Integer, db.ForeignKey("workspaces.id"), nullable=False
+     )
+     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+     role = db.Column(db.String(32))
+ 
+ 
+ class User(UserMixin, TimestampMixin, db.Model):
+     __tablename__ = "users"
+ 
+     id = db.Column(db.Integer, primary_key=True)
+     org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+     email = db.Column(db.String(120), nullable=False, unique=True)
+     password_hash = db.Column(db.String(255), nullable=False)
+     role = db.Column(db.String(32), nullable=False, default="producer")
+     status = db.Column(db.String(32), nullable=False, default="active")
+     must_change_password = db.Column(db.Boolean, nullable=False, default=False)
+     first_name = db.Column(db.String(120))
+     last_name = db.Column(db.String(120))
+     preferred_name = db.Column(db.String(120))
+     job_title = db.Column(db.String(120))
+     phone_number = db.Column(db.String(64))
+     emergency_contact = db.Column(db.JSON)
++    compensation_currency = db.Column(db.String(8), nullable=False, default="USD")
++    base_salary = db.Column(db.Numeric(12, 2))
++    bonus_plan = db.Column(db.String(120))
++    bonus_target = db.Column(db.Numeric(12, 2))
++    compensation_notes = db.Column(db.Text)
+     last_login = db.Column(db.DateTime)
+     notification_preferences = db.Column(
+         db.JSON, default=lambda: dict(DEFAULT_NOTIFICATION_PREFERENCES)
+     )
+     two_factor_enabled = db.Column(db.Boolean, nullable=False, default=True)
+     two_factor_secret = db.Column(db.String(255))
+     two_factor_expires_at = db.Column(db.DateTime)
+ 
+     producer = db.relationship(
+         "Producer",
+         backref="user",
+         uselist=False,
+         foreign_keys="Producer.user_id",
+     )
+     workspace_memberships = db.relationship(
+         "WorkspaceMembership",
+         backref="user",
+         lazy=True,
+         cascade="all, delete-orphan",
+     )
+     office_memberships = db.relationship(
+         "OfficeMembership",
+         backref="user",
+         lazy=True,
+         cascade="all, delete-orphan",
+@@ -176,50 +182,82 @@ class User(UserMixin, TimestampMixin, db.Model):
+ 
+ 
+     def set_password(self, password: str) -> None:
+         self.password_hash = generate_password_hash(password)
+ 
+     def check_password(self, password: str) -> bool:
+         return check_password_hash(self.password_hash, password)
+ 
+     @property
+     def display_name_for_ui(self) -> str:
+         if self.preferred_name:
+             return self.preferred_name
+         if getattr(self, "producer", None) and self.producer and self.producer.display_name:
+             return self.producer.display_name
+         return self.email
+ 
+     @property
+     def full_name(self) -> str | None:
+         parts = [name for name in [self.first_name, self.last_name] if name]
+         if parts:
+             return " ".join(parts)
+         if self.preferred_name:
+             return self.preferred_name
+         return None
+ 
++    def update_compensation(
++        self,
++        *,
++        currency: str | None = None,
++        base_salary: "Decimal | None" = None,
++        bonus_plan: str | None = None,
++        bonus_target: "Decimal | None" = None,
++        notes: str | None = None,
++    ) -> None:
++        if currency:
++            self.compensation_currency = currency.upper()
++        self.base_salary = base_salary
++        self.bonus_plan = bonus_plan or None
++        self.bonus_target = bonus_target
++        self.compensation_notes = notes or None
++
++    @property
++    def compensation_summary(self) -> str:
++        pieces: list[str] = []
++        if self.base_salary is not None:
++            pieces.append(
++                f"Base ${self.base_salary:,.2f} {self.compensation_currency}".strip()
++            )
++        if self.bonus_plan:
++            target = (
++                f" (${self.bonus_target:,.2f})" if self.bonus_target is not None else ""
++            )
++            pieces.append(f"Bonus: {self.bonus_plan}{target}")
++        if not pieces:
++            return "No compensation details recorded"
++        return " · ".join(pieces)
++
+     def wants_notification(self, category: str) -> bool:
+         prefs = self.notification_preferences or {}
+         default = DEFAULT_NOTIFICATION_PREFERENCES.get(category, True)
+         return bool(prefs.get(category, default))
+ 
+     def set_notification_preferences(self, categories: list[str]) -> None:
+         allowed = set(DEFAULT_NOTIFICATION_PREFERENCES.keys())
+         selected = {key: (key in categories) for key in allowed}
+         self.notification_preferences = selected
+ 
+     def generate_two_factor_code(self) -> str:
+         code = f"{randbelow(1_000_000):06d}"
+         self.two_factor_secret = generate_password_hash(code)
+         self.two_factor_expires_at = datetime.utcnow() + timedelta(minutes=10)
+         return code
+ 
+     def verify_two_factor_code(self, candidate: str | None) -> bool:
+         if not candidate or not self.two_factor_secret:
+             return False
+         if self.two_factor_expires_at and self.two_factor_expires_at < datetime.utcnow():
+             return False
+         return check_password_hash(self.two_factor_secret, candidate.strip())
+ 
+     def clear_two_factor_challenge(self) -> None:
+         self.two_factor_secret = None
+@@ -599,50 +637,99 @@ class WorkspaceNote(TimestampMixin, db.Model):
+     office_id = db.Column(db.Integer, db.ForeignKey("offices.id"))
+     workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"))
+     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+     scope = db.Column(db.String(16), nullable=False, default="personal")
+     title = db.Column(db.String(120))
+     content = db.Column(db.Text, default="")
+ 
+     workspace = db.relationship("Workspace", backref="notes", foreign_keys=[workspace_id])
+     office = db.relationship("Office", backref="notes", foreign_keys=[office_id])
+     owner = db.relationship("User", backref="notes", foreign_keys=[owner_id])
+ 
+ 
+ class WorkspaceChatMessage(TimestampMixin, db.Model):
+     __tablename__ = "workspace_chat_messages"
+ 
+     id = db.Column(db.Integer, primary_key=True)
+     org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+     workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"), nullable=False)
+     author_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+     content = db.Column(db.Text, nullable=False)
+ 
+     workspace = db.relationship("Workspace", backref="chat_messages", foreign_keys=[workspace_id])
+     author = db.relationship("User", backref="chat_messages", foreign_keys=[author_id])
+ 
+ 
++class MessageThread(TimestampMixin, db.Model):
++    __tablename__ = "message_threads"
++
++    id = db.Column(db.Integer, primary_key=True)
++    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
++    name = db.Column(db.String(180))
++    is_group = db.Column(db.Boolean, nullable=False, default=False)
++    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
++    last_message_at = db.Column(db.DateTime)
++
++    creator = db.relationship("User", backref="message_threads_created", foreign_keys=[created_by_id])
++    participants = db.relationship(
++        "MessageParticipant",
++        backref="thread",
++        lazy=True,
++        cascade="all, delete-orphan",
++    )
++    messages = db.relationship(
++        "ConversationMessage",
++        backref="thread",
++        lazy=True,
++        cascade="all, delete-orphan",
++    )
++
++
++class MessageParticipant(TimestampMixin, db.Model):
++    __tablename__ = "message_participants"
++
++    id = db.Column(db.Integer, primary_key=True)
++    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
++    thread_id = db.Column(db.Integer, db.ForeignKey("message_threads.id"), nullable=False)
++    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
++    role = db.Column(db.String(32), nullable=False, default="member")
++
++    user = db.relationship("User", backref="message_participants", foreign_keys=[user_id])
++
++
++class ConversationMessage(TimestampMixin, db.Model):
++    __tablename__ = "conversation_messages"
++
++    id = db.Column(db.Integer, primary_key=True)
++    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
++    thread_id = db.Column(db.Integer, db.ForeignKey("message_threads.id"), nullable=False)
++    author_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
++    content = db.Column(db.Text, nullable=False)
++
++    author = db.relationship("User", backref="conversation_messages", foreign_keys=[author_id])
++
++
+ class HRDocument(TimestampMixin, db.Model):
+     __tablename__ = "hr_documents"
+ 
+     id = db.Column(db.Integer, primary_key=True)
+     org_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), nullable=False)
+     title = db.Column(db.String(180), nullable=False)
+     category = db.Column(db.String(64), nullable=False, default="policy")
+     version = db.Column(db.String(32))
+     summary = db.Column(db.Text)
+     link_url = db.Column(db.String(500))
+     content = db.Column(db.Text)
+     requires_acknowledgement = db.Column(db.Boolean, default=False)
+     published_at = db.Column(db.DateTime)
+     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+ 
+     creator = db.relationship("User", backref="hr_documents_created", foreign_keys=[created_by_id])
+     acknowledgements = db.relationship(
+         "HRDocumentAcknowledgement",
+         backref="document",
+         lazy=True,
+         cascade="all, delete-orphan",
+     )
+ 
+ 
+ class HRDocumentAcknowledgement(TimestampMixin, db.Model):
+diff --git a/app/resend_email.py b/app/resend_email.py
+index 4bfc9f8400a96fdc2d4a8c279b63edc07815e976..471bdf6e4ba497bde260fe6d020ce8d298e713a3 100644
+--- a/app/resend_email.py
++++ b/app/resend_email.py
+@@ -373,111 +373,143 @@ def send_import_notification(
+         text_lines.append("")
+         text_lines.append("Carrier breakdown:")
+         text_lines.extend(f"- {item}" for item in summary_items)
+     text_body = _plain_text_with_footer(text_lines)
+     html_body = _email_card(subject, html_parts)
+ 
+     _send_email(
+         recipients=recipients,
+         subject=subject,
+         body=text_body,
+         text_body=text_body,
+         html_body=html_body,
+         sender_name=f"{uploader_name} via TrackYourSheets" if uploader_name else None,
+         reply_to=reply_to,
+         metadata={
+             "workspace_id": getattr(workspace, "id", None),
+             "period": period,
+         },
+         is_html=True,
+     )
+ 
+ 
+ def send_workspace_invitation(
+     recipient: str,
+     inviter,
+-    workspace,
+-    role: str,
++    workspace=None,
++    role: str | None = None,
+     *,
+     temporary_password: str,
+     login_url: str,
+ ) -> None:
+     inviter_display = (
+         getattr(inviter, "display_name_for_ui", None)
+         or getattr(inviter, "email", None)
+         or ""
+     )
+     inviter_name = inviter_display or "A teammate"
+-    subject = f"You're invited to {workspace.name} on TrackYourSheets"
++    workspace_name = getattr(workspace, "name", None)
++    office_name = getattr(getattr(workspace, "office", None), "name", None)
++    if workspace_name:
++        subject = f"You're invited to {workspace_name} on TrackYourSheets"
++        intro = f"{inviter_name} invited you to join the {workspace_name} workspace."
++    else:
++        subject = "You're invited to TrackYourSheets"
++        intro = (
++            f"{inviter_name} invited you to collaborate in TrackYourSheets. "
++            "You'll be able to join offices and workspaces as soon as you sign in."
++        )
++
+     html_parts = [
+-        _paragraph(f"{inviter_name} invited you to join the {workspace.name} workspace."),
++        _paragraph(intro),
+         _paragraph(f"Role: {role.title()}") if role else "",
+-        _paragraph("Use the temporary password below to sign in and you'll be prompted to create your own."),
+-        _highlight_block(temporary_password),
+-        _paragraph("Keep this password safe—it expires once you update it."),
+-        _button("Open TrackYourSheets", login_url),
+     ]
++    if office_name:
++        html_parts.append(
++            _paragraph(
++                f"Primary office: {office_name}. You can join additional offices once you're signed in."
++            )
++        )
++    html_parts.extend(
++        [
++            _paragraph(
++                "Use the temporary password below to sign in and you'll be prompted to create your own."
++            ),
++            _highlight_block(temporary_password),
++            _paragraph("Keep this password safe—it expires once you update it."),
++            _button("Open TrackYourSheets", login_url),
++        ]
++    )
+     html_parts = [part for part in html_parts if part]
+     html_parts.append(
+         _paragraph(
+-            "Need a refresher? The in-app How-To guide walks through imports, payouts, and workspace chat."
++            "Need a refresher? Explore the in-app How-To guide for imports, payouts, workspace chat, payroll tracking, and office assignments."
+         )
+     )
++    text_intro = (
++        f"{inviter_name} invited you to join the {workspace_name} workspace on TrackYourSheets."
++        if workspace_name
++        else f"{inviter_name} invited you to TrackYourSheets. Join offices and workspaces after you sign in."
++    )
+     text_lines = [
+-        f"{inviter_name} invited you to join the {workspace.name} workspace on TrackYourSheets.",
++        text_intro,
+         f"Role: {role.title()}" if role else None,
++        (f"Primary office: {office_name}" if office_name else None),
+         "",  # spacer
+         "Temporary password:",
+         temporary_password,
+         "",
+         "Sign in with your email, then set a new password when prompted.",
+         login_url,
+     ]
+     text_lines = [line for line in text_lines if line is not None]
+     text_body = _plain_text_with_footer(text_lines)
+     html_body = _email_card(subject, html_parts)
+ 
+     reply_to: Optional[list[EmailRecipient]] = None
+     if getattr(inviter, "email", None):
+         reply_to = [getattr(inviter, "email", "")]
+ 
+     _send_email(
+         recipients=[recipient],
+         subject=subject,
+         body=text_body,
+         text_body=text_body,
+         html_body=html_body,
+         is_html=True,
+         sender_name=(
+             f"{inviter_display} via TrackYourSheets"
+             if inviter_display
+             else "TrackYourSheets"
+         ),
+         reply_to=reply_to,
+         metadata={
+             "workspace_id": getattr(workspace, "id", None),
+             "role": role,
++            "office_id": getattr(getattr(workspace, "office", None), "id", None)
++            if workspace
++            else None,
+         },
+     )
+ 
+ 
+ def send_signup_welcome(user, organization) -> None:
+     if not getattr(user, "email", None):
+         return
+     org_name = getattr(organization, "name", "TrackYourSheets")
+     subject = "Welcome to TrackYourSheets"
+     text_lines = [
+         f"Hi {user.email},",
+         "",
+         "Thanks for activating your TrackYourSheets subscription!",
+         f"Your organisation, {org_name}, is ready to automate producer payouts, streamline imports, and collaborate in workspaces.",
+         "",
+         "Get started by:",
+         "- Adding your first workspace and agent",
+         "- Uploading a carrier statement to see the pipeline in action",
+         "- Inviting teammates from the admin console",
+         "",
+         "Reply to this email if you need a hand—our team is standing by.",
+     ]
+     text_body = _plain_text_with_footer(text_lines)
+     html_parts = [
+         _paragraph(f"Hi {user.email},"),
+diff --git a/app/static/downloads/signup_template.xlsx b/app/static/downloads/signup_template.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..ec6c231f33afdf6dbc2fffcc90652297ef7ea3bd
+GIT binary patch
+literal 6173
+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
+L)wP1je_#C%EKtFZ
+
+literal 0
+HcmV?d00001
+
+diff --git a/app/static/js/dashboard.js b/app/static/js/dashboard.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..ecbfb8aa36977d9e69acfc4686f32ea2a6372379
+--- /dev/null
++++ b/app/static/js/dashboard.js
+@@ -0,0 +1,114 @@
++(function () {
++  const totals = (window.TrackYourSheets && window.TrackYourSheets.premiumTotals) || {};
++  const chartCanvas = document.getElementById('premiumChart');
++  if (!chartCanvas || typeof Chart === 'undefined') {
++    return;
++  }
++
++  const labels = {
++    today: 'Today',
++    week: 'This week',
++    month: 'This month',
++    quarter: 'This quarter',
++    year: 'Year to date',
++  };
++  const rangeOrder = ['today', 'week', 'month', 'quarter', 'year'];
++  const currency = chartCanvas.dataset.premiumCurrency || 'USD';
++  const formatter = new Intl.NumberFormat('en-US', {
++    style: 'currency',
++    currency,
++    maximumFractionDigits: 2,
++  });
++
++  function buildData(activeRange) {
++    return rangeOrder.map((key) => ({
++      label: labels[key],
++      value: Number.parseFloat(totals[key] || 0),
++      isActive: activeRange === 'all' || activeRange === key,
++    }));
++  }
++
++  const context = chartCanvas.getContext('2d');
++  let activeRange = 'all';
++  let currentDataset = buildData(activeRange);
++
++  const chart = new Chart(context, {
++    type: 'bar',
++    data: {
++      labels: currentDataset.map((entry) => entry.label),
++      datasets: [
++        {
++          label: 'Premium collected',
++          data: currentDataset.map((entry) => entry.value),
++          backgroundColor: currentDataset.map((entry) =>
++            entry.isActive ? 'rgba(13, 110, 253, 0.8)' : 'rgba(206, 212, 218, 0.6)'
++          ),
++          borderRadius: 6,
++        },
++      ],
++    },
++    options: {
++      maintainAspectRatio: false,
++      plugins: {
++        legend: { display: false },
++        tooltip: {
++          callbacks: {
++            label(context) {
++              const value = context.parsed.y || 0;
++              return `${formatter.format(value)} collected`;
++            },
++          },
++        },
++      },
++      scales: {
++        y: {
++          beginAtZero: true,
++          ticks: {
++            callback(value) {
++              return formatter.format(value);
++            },
++          },
++        },
++      },
++    },
++  });
++
++  const summaryEl = document.querySelector('[data-premium-summary]');
++
++  function updateSummary(range) {
++    if (!summaryEl) {
++      return;
++    }
++    if (range === 'all') {
++      summaryEl.textContent = 'Comparing today, week, month, quarter, and year totals.';
++      return;
++    }
++    const value = Number.parseFloat(totals[range] || 0);
++    summaryEl.textContent = `${labels[range]} · ${formatter.format(value)} collected`;
++  }
++
++  function applyFilter(range) {
++    activeRange = range;
++    currentDataset = buildData(activeRange);
++    chart.data.labels = currentDataset.map((entry) => entry.label);
++    chart.data.datasets[0].data = currentDataset.map((entry) => entry.value);
++    chart.data.datasets[0].backgroundColor = currentDataset.map((entry) =>
++      entry.isActive ? 'rgba(13, 110, 253, 0.8)' : 'rgba(206, 212, 218, 0.6)'
++    );
++    chart.update();
++    updateSummary(range);
++  }
++
++  document.querySelectorAll('[data-premium-range]').forEach((button) => {
++    button.addEventListener('click', () => {
++      const range = button.getAttribute('data-premium-range');
++      if (!range || range === activeRange) {
++        return;
++      }
++      document.querySelectorAll('[data-premium-range]').forEach((btn) =>
++        btn.classList.toggle('active', btn === button)
++      );
++      applyFilter(range);
++    });
++  });
++})();
+diff --git a/app/templates/admin/_subnav.html b/app/templates/admin/_subnav.html
+index 7d370e6ee4bb06f0b5e89e68fe7d990bd3ca0f47..52314fad0c35e93408977c1efd5062e15b8493b3 100644
+--- a/app/templates/admin/_subnav.html
++++ b/app/templates/admin/_subnav.html
+@@ -1,12 +1,13 @@
+ {% set active = active_tab or 'overview' %}
+ <div class="admin-subnav">
+   <nav class="nav nav-pills flex-wrap gap-2">
+     <a class="nav-link {% if active == 'overview' %}active{% endif %}" href="{{ url_for('admin.index') }}">Overview</a>
+     <a class="nav-link {% if active == 'leaderboard' %}active{% endif %}" href="{{ url_for('admin.leaderboard') }}">Producer overrides</a>
+     <a class="nav-link {% if active == 'categories' %}active{% endif %}" href="{{ url_for('admin.manage_categories') }}">Categories &amp; tags</a>
++    <a class="nav-link {% if active == 'users' %}active{% endif %}" href="{{ url_for('admin.manage_user_compensation') }}">Users &amp; payroll</a>
+     <a class="nav-link {% if active == 'guide' %}active{% endif %}" href="{{ url_for('admin.how_to') }}">Role guides</a>
+     <a class="nav-link {% if active == 'reports' %}active{% endif %}" href="{{ url_for('reports.overview') }}">Reports &amp; exports</a>
+     <a class="nav-link {% if active == 'payroll' %}active{% endif %}" href="{{ url_for('admin.payroll_dashboard') }}">Payroll</a>
+     <a class="nav-link {% if active == 'settings' %}active{% endif %}" href="{{ url_for('main.settings') }}">Settings &amp; billing</a>
+   </nav>
+ </div>
+diff --git a/app/templates/admin/users_compensation.html b/app/templates/admin/users_compensation.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..dd922b9a5ed65803790ab6209d6863d63a002ae8
+--- /dev/null
++++ b/app/templates/admin/users_compensation.html
+@@ -0,0 +1,88 @@
++{% extends 'base.html' %}
++{% block title %}User Compensation · TrackYourSheets{% endblock %}
++{% block content %}
++{% set active_tab = 'users' %}
++{% include 'admin/_subnav.html' %}
++
++<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4 gap-3">
++  <div>
++    <h1 class="h3 mb-1">Compensation overview</h1>
++    <p class="text-muted mb-0">Track base salaries, bonus plans, and workspace coverage for everyone in your organisation.</p>
++  </div>
++  <div class="d-flex gap-2">
++    <a class="btn btn-outline-secondary" href="{{ url_for('admin.manage_user_compensation', export='csv') }}">Export CSV</a>
++    <a class="btn btn-primary" href="{{ url_for('hr.dashboard') }}">Open HR portal</a>
++  </div>
++</div>
++
++<div class="alert alert-info d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-2" role="alert">
++  <div>
++    <strong>Total base salary:</strong> ${{ '{:,.2f}'.format(totals.base) }} ·
++    <strong>Total bonus target:</strong> ${{ '{:,.2f}'.format(totals.bonus) }}
++  </div>
++  <span class="small text-muted">Updates sync with HR profiles, payroll runs, and exports.</span>
++</div>
++
++<div class="table-responsive">
++  <table class="table align-middle">
++    <thead class="table-light">
++      <tr>
++        <th scope="col">Teammate</th>
++        <th scope="col">Role</th>
++        <th scope="col">Workspaces</th>
++        <th scope="col">Base salary</th>
++        <th scope="col">Bonus plan</th>
++        <th scope="col">Bonus target</th>
++        <th scope="col">Currency</th>
++        <th scope="col">Notes</th>
++        <th scope="col">Actions</th>
++      </tr>
++    </thead>
++    <tbody>
++      {% for user in users %}
++      <tr>
++        <td>
++          <div class="fw-semibold">{{ user.display_name_for_ui }}</div>
++          <div class="text-muted small">{{ user.email }}</div>
++        </td>
++        <td>{{ user.role|capitalize }}</td>
++        <td class="small text-muted">
++          {% set workspace_labels = [] %}
++          {% for membership in user.workspace_memberships %}
++            {% if membership.workspace %}
++              {% set _ = workspace_labels.append(membership.workspace.name) %}
++            {% endif %}
++          {% endfor %}
++          {{ workspace_labels|join(', ') if workspace_labels else '—' }}
++        </td>
++        <td>
++          <input type="number" step="0.01" min="0" name="base_salary" class="form-control form-control-sm" value="{{ '{:,.2f}'.format(user.base_salary) if user.base_salary is not none else '' }}" placeholder="0.00" form="comp-{{ user.id }}">
++        </td>
++        <td>
++          <input type="text" name="bonus_plan" class="form-control form-control-sm" value="{{ user.bonus_plan or '' }}" placeholder="Plan" form="comp-{{ user.id }}">
++        </td>
++        <td>
++          <input type="number" step="0.01" min="0" name="bonus_target" class="form-control form-control-sm" value="{{ '{:,.2f}'.format(user.bonus_target) if user.bonus_target is not none else '' }}" placeholder="0.00" form="comp-{{ user.id }}">
++        </td>
++        <td>
++          <input type="text" name="currency" class="form-control form-control-sm" value="{{ user.compensation_currency }}" maxlength="8" form="comp-{{ user.id }}">
++        </td>
++        <td>
++          <input type="text" name="notes" class="form-control form-control-sm" value="{{ user.compensation_notes or '' }}" placeholder="Internal notes" form="comp-{{ user.id }}">
++        </td>
++        <td>
++          <form method="post" id="comp-{{ user.id }}" class="d-flex flex-column gap-2 align-items-end">
++            <input type="hidden" name="user_id" value="{{ user.id }}">
++            <button type="submit" class="btn btn-sm btn-primary">Save</button>
++          </form>
++        </td>
++      </tr>
++      {% else %}
++      <tr>
++        <td colspan="8" class="text-center text-muted py-4">No teammates yet. Invite your first user from the admin overview.</td>
++      </tr>
++      {% endfor %}
++    </tbody>
++  </table>
++</div>
++{% endblock %}
+diff --git a/app/templates/base.html b/app/templates/base.html
+index 1835d6d6598aefd4fff57051f06758c972bfe565..04430f04be49ae3777fbda0b68dd1e60ff5aa581 100644
+--- a/app/templates/base.html
++++ b/app/templates/base.html
+@@ -17,50 +17,53 @@
+       <div class="container-fluid">
+         <a class="navbar-brand fw-bold" href="{{ url_for('main.landing') }}">TrackYourSheets</a>
+         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
+           <span class="navbar-toggler-icon"></span>
+         </button>
+         <div class="collapse navbar-collapse" id="mainNav">
+           {% if current_user.is_authenticated %}
+           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.dashboard') }}">Dashboard</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('imports.index') }}">Imports</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('reports.overview') }}">Reports</a>
+             </li>
+             {% if current_user.role in ['owner', 'admin', 'agent'] %}
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.audit_trail') }}">Audit</a>
+             </li>
+             {% endif %}
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.guide') }}">Guide</a>
+             </li>
++            <li class="nav-item">
++              <a class="nav-link" href="{{ url_for('main.messages_home') }}">Messages</a>
++            </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.api_guide') }}">API</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('hr.submit_complaint') }}">HR support</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.settings') }}">Settings</a>
+             </li>
+             {% if current_user.role in ['owner', 'admin', 'agent', 'bookkeeper', 'hr'] %}
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('hr.dashboard') }}">HR</a>
+             </li>
+             {% endif %}
+             {% if current_user.role in ['owner', 'admin', 'agent'] %}
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('admin.index') }}">Admin</a>
+             </li>
+             {% endif %}
+           </ul>
+           <div class="d-flex align-items-center gap-3">
+             {% if workspace_switcher.options %}
+             <div class="dropdown">
+               <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                 {% if workspace_switcher.active %}
+@@ -93,50 +96,56 @@
+           <ul class="navbar-nav ms-auto mb-2 mb-lg-0 me-lg-3">
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.landing') }}#features">Features</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.landing') }}#pricing">Pricing</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.landing') }}#workflow">Workflow</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.api_guide') }}">API Guide</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="{{ url_for('main.contact') }}">Contact</a>
+             </li>
+           </ul>
+           <div class="d-flex flex-column flex-lg-row gap-2">
+             <a class="btn btn-light" href="{{ url_for('auth.login') }}">Login</a>
+             <a class="btn btn-outline-light" href="{{ url_for('auth.signup') }}">Start Free Trial</a>
+           </div>
+           {% endif %}
+         </div>
+       </div>
+     </nav>
++    <div class="bg-warning-subtle text-warning-emphasis border-bottom py-2">
++      <div class="container d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-2 small">
++        <span><strong>Work in progress:</strong> TrackYourSheets is shipping new features every week. Spot a bug? Email <a class="link-underline link-underline-opacity-0" href="mailto:contact@trackyoursheets.com">contact@trackyoursheets.com</a> or DM us on <a class="link-underline link-underline-opacity-0" href="https://www.instagram.com/trackyoursheets" target="_blank" rel="noopener">Instagram</a>.</span>
++        <a class="btn btn-warning btn-sm" href="mailto:contact@trackyoursheets.com">Report an issue</a>
++      </div>
++    </div>
+     {% block main_wrapper %}
+     <main class="{% block main_class %}container my-4{% endblock %}">
+       {% block flash_messages %}
+       {% with messages = get_flashed_messages(with_categories=true) %}
+         {% if messages %}
+         <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1080;">
+           {% for category, message in messages %}
+           <div class="toast align-items-center text-bg-{{ 'primary' if category == 'message' else category }} border-0 show mb-2" role="alert">
+             <div class="d-flex">
+               <div class="toast-body">{{ message }}</div>
+               <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+             </div>
+           </div>
+           {% endfor %}
+         </div>
+         {% endif %}
+       {% endwith %}
+       {% endblock %}
+       {% block content %}{% endblock %}
+     </main>
+     {% endblock %}
+ 
+     <footer class="footer bg-dark text-white-50 py-4 mt-auto">
+       <div class="container d-flex flex-column flex-md-row justify-content-between align-items-center">
+         <div>
+diff --git a/app/templates/dashboard.html b/app/templates/dashboard.html
+index 546efd7d08d2961679e2ea9e7c39f3fcbb323d8d..b794c9c9d4f9d2d0ee03fb1203f0a9b82cc6c4c1 100644
+--- a/app/templates/dashboard.html
++++ b/app/templates/dashboard.html
+@@ -9,148 +9,187 @@
+         <h2 class="display-6 fw-semibold mt-2">{{ txns_total }}</h2>
+         <p class="text-muted mb-0">Commission transactions tracked</p>
+       </div>
+     </div>
+   </div>
+   <div class="col-xl-4 col-md-6">
+     <div class="card stat-card shadow-sm">
+       <div class="card-body">
+         <span class="badge bg-success-soft text-success">Imports</span>
+         <h2 class="display-6 fw-semibold mt-2">{{ imports|length }}</h2>
+         <p class="text-muted mb-0">Recent carrier statements processed</p>
+       </div>
+     </div>
+   </div>
+   <div class="col-xl-4 col-md-12">
+     <div class="card stat-card shadow-sm">
+       <div class="card-body">
+         <span class="badge bg-warning-soft text-warning">Audit</span>
+         <h2 class="display-6 fw-semibold mt-2">{{ audit_total }}</h2>
+         <p class="text-muted mb-0">Audit events captured across your org</p>
+       </div>
+     </div>
+   </div>
+ </div>
+ 
++<section class="mt-4">
++  <div class="card shadow-sm">
++    <div class="card-header bg-light d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-3">
++      <div>
++        <h2 class="h6 mb-1">Premium collected</h2>
++        <p class="text-muted small mb-0" data-premium-summary>Comparing today, week, month, quarter, and year totals.</p>
++      </div>
++      <div class="btn-group btn-group-sm" role="group" aria-label="Premium filters">
++        <button type="button" class="btn btn-outline-primary active" data-premium-range="all">All</button>
++        <button type="button" class="btn btn-outline-primary" data-premium-range="today">Today</button>
++        <button type="button" class="btn btn-outline-primary" data-premium-range="week">This week</button>
++        <button type="button" class="btn btn-outline-primary" data-premium-range="month">This month</button>
++        <button type="button" class="btn btn-outline-primary" data-premium-range="quarter">Quarter</button>
++        <button type="button" class="btn btn-outline-primary" data-premium-range="year">Year</button>
++      </div>
++    </div>
++    <div class="card-body">
++      <canvas id="premiumChart" height="160" data-premium-currency="{{ premium_currency }}"></canvas>
++    </div>
++  </div>
++</section>
++
+ <section class="mt-5">
+   <div class="d-flex justify-content-between align-items-center mb-3">
+     <div>
+       <h2 class="h5 mb-0">Workspace notes</h2>
+       <p class="text-muted small mb-0">Capture personal reminders or share updates with your office. Notes auto-save.</p>
+     </div>
+     {% if workspaces %}
+     <form method="get" class="d-flex align-items-center gap-2">
+       <label class="form-label mb-0 small text-muted" for="workspaceSwitcher">Workspace</label>
+       <select id="workspaceSwitcher" name="workspace_id" class="form-select form-select-sm" onchange="this.form.submit()">
+         {% for workspace in workspaces %}
+         <option value="{{ workspace.id }}" {% if active_workspace and active_workspace.id == workspace.id %}selected{% endif %}>
+           {{ workspace.office.name if workspace.office }}{% if workspace.office %} · {% endif %}{{ workspace.name }}
+         </option>
+         {% endfor %}
+       </select>
+     </form>
+     {% endif %}
+   </div>
+   {% if not active_workspace %}
+   <div class="alert alert-warning">Assign a workspace to start capturing notes.</div>
+   {% else %}
+   <div class="row g-3">
+     <div class="col-lg-6">
+       <div class="card shadow-sm h-100">
+         <div class="card-body">
+           <h3 class="h6">Personal notes</h3>
+-          <textarea class="form-control" rows="8" data-note-scope="personal" data-workspace-id="{{ active_workspace.id }}">{{ personal_note.content if personal_note else '' }}</textarea>
+-          <div class="form-text small text-muted">
+-            <div>Only you can see these notes.</div>
+-            <div data-note-status="personal">
++          <div class="d-flex justify-content-between align-items-center mb-2">
++            <span class="badge bg-secondary-soft text-secondary">Private</span>
++            <small class="text-muted" data-note-status="personal">
+               {% if personal_note_meta %}
+-              Last updated by {{ personal_note_meta.editor }} on {{ personal_note_meta.timestamp }}
++              <i class="bi bi-person"></i> {{ personal_note_meta.editor }} · <i class="bi bi-clock-history"></i> {{ personal_note_meta.timestamp }}
+               {% else %}
+               Not saved yet.
+               {% endif %}
+-            </div>
++            </small>
+           </div>
++          <textarea class="form-control" rows="8" data-note-scope="personal" data-workspace-id="{{ active_workspace.id }}">{{ personal_note.content if personal_note else '' }}</textarea>
++          <div class="form-text small text-muted">Only you can see these notes.</div>
+         </div>
+       </div>
+     </div>
+     <div class="col-lg-6">
+       <div class="card shadow-sm h-100">
+         <div class="card-body">
+           <h3 class="h6">Shared workspace board</h3>
+-          <textarea class="form-control" rows="8" data-note-scope="shared" data-workspace-id="{{ active_workspace.id }}">{{ shared_note.content if shared_note else '' }}</textarea>
+-          <div class="form-text small text-muted">
+-            <div>Visible to everyone assigned to this workspace.</div>
+-            <div data-note-status="shared">
++          <div class="d-flex justify-content-between align-items-center mb-2">
++            <span class="badge bg-primary-soft text-primary">Shared</span>
++            <small class="text-muted" data-note-status="shared">
+               {% if shared_note_meta %}
+-              Last updated by {{ shared_note_meta.editor }} on {{ shared_note_meta.timestamp }}
++              <i class="bi bi-people"></i> {{ shared_note_meta.editor }} · <i class="bi bi-clock-history"></i> {{ shared_note_meta.timestamp }}
+               {% else %}
+               Not saved yet.
+               {% endif %}
+-            </div>
++            </small>
+           </div>
++          <textarea class="form-control" rows="8" data-note-scope="shared" data-workspace-id="{{ active_workspace.id }}">{{ shared_note.content if shared_note else '' }}</textarea>
++          <div class="form-text small text-muted">Visible to everyone assigned to this workspace.</div>
+         </div>
+       </div>
+     </div>
+   </div>
+   {% endif %}
+ </section>
+ 
+ <section class="mt-5">
+   <div class="d-flex justify-content-between align-items-center mb-3">
+     <div>
+       <h2 class="h5 mb-0">Workspace chat</h2>
+       <p class="text-muted small mb-0">Coordinate live updates, renewal reminders, and approvals without leaving TrackYourSheets.</p>
+     </div>
+     {% if active_workspace %}
+     <div class="d-flex gap-2">
+       <button class="btn btn-sm btn-outline-secondary" type="button" data-chat-refresh>Refresh</button>
+     </div>
+     {% endif %}
+   </div>
+   {% if not active_workspace %}
+   <div class="alert alert-warning">Assign a workspace to unlock real-time chat.</div>
+   {% else %}
+   <div class="card shadow-sm">
+     <div class="card-body d-flex flex-column gap-3">
+       <div class="chat-message-list border rounded" style="max-height: 360px; overflow-y: auto;" data-chat-scroll>
+         <ul class="list-group list-group-flush" data-chat-messages>
+           {% for message in chat_messages %}
+           <li class="list-group-item">
+             <div class="d-flex justify-content-between align-items-center">
+               <span class="fw-semibold">{{ message.author.display_name_for_ui if message.author else 'Unknown user' }}</span>
+               <span class="text-muted small">{{ message.created_at.strftime('%b %d, %Y %I:%M %p') if message.created_at else '' }}</span>
+             </div>
+-            <div class="mt-1 small">{{ message.content }}</div>
++            <div class="mt-1 small">{{ message.rendered_content|safe }}</div>
+           </li>
+           {% else %}
+           <li class="list-group-item text-center text-muted py-3">Start the conversation by sending the first update below.</li>
+           {% endfor %}
+         </ul>
+       </div>
+       <form id="workspaceChatForm" data-workspace-id="{{ active_workspace.id }}">
+         <label class="form-label" for="workspaceChatMessage">Send a message</label>
+         <textarea class="form-control" id="workspaceChatMessage" rows="2" placeholder="Share a win, ask a question, or drop a reminder" required></textarea>
++        <div class="d-flex align-items-center gap-2 mt-2">
++          <div class="btn-group dropup">
++            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
++              😊 Emoji
++            </button>
++            <div class="dropdown-menu p-2 shadow-sm" style="min-width: 220px;">
++              <div class="d-flex flex-wrap gap-2" data-emoji-palette>
++                {% for emoji in ['🎉','🔥','✅','💡','🚀','📣','🙏','👏','📝','📊','🌟','⏰'] %}
++                <button type="button" class="btn btn-sm btn-light" data-emoji="{{ emoji }}">{{ emoji }}</button>
++                {% endfor %}
++              </div>
++            </div>
++          </div>
++          <small class="text-muted">Tag teammates with @ and sprinkle emojis to celebrate wins.</small>
++        </div>
+         <div class="d-flex justify-content-between align-items-center mt-2">
+           <small class="text-muted" data-chat-status>Messages are shared with everyone assigned to this workspace.</small>
+           <div class="d-flex gap-2">
+             <button class="btn btn-sm btn-outline-secondary" type="button" data-chat-refresh>Refresh</button>
+             <button class="btn btn-sm btn-primary" type="submit">Send</button>
+           </div>
+         </div>
+       </form>
+     </div>
+   </div>
+   {% endif %}
+ </section>
+ 
+ <section class="mt-5">
+   <div class="d-flex justify-content-between align-items-center mb-3">
+     <h2 class="h5 mb-0">Recent imports</h2>
+     <a class="btn btn-sm btn-primary" href="{{ url_for('imports.index') }}">New import</a>
+   </div>
+   <div class="card shadow-sm">
+     <div class="table-responsive">
+       <table class="table align-middle mb-0">
+         <thead class="table-light">
+           <tr>
+             <th>Carrier</th>
+             <th>Period</th>
+@@ -208,83 +247,90 @@
+           <div class="bg-light border rounded p-3">
+             {% if entry.before %}
+             <h6 class="small text-uppercase text-muted fw-semibold">Before</h6>
+             <pre class="small mb-3">{{ entry.before | tojson(indent=2) }}</pre>
+             {% endif %}
+             {% if entry.after %}
+             <h6 class="small text-uppercase text-muted fw-semibold">After</h6>
+             <pre class="small mb-0">{{ entry.after | tojson(indent=2) }}</pre>
+             {% endif %}
+             {% if not entry.before and not entry.after %}
+             <p class="small text-muted mb-0">No field-level context recorded for this action.</p>
+             {% endif %}
+           </div>
+         </div>
+       </div>
+       {% else %}
+       <div class="list-group-item text-center text-muted py-4">
+         Audit log will populate as you import, reconcile, and finalize months.
+       </div>
+       {% endfor %}
+     </div>
+   </div>
+ </section>
+ {% endblock %}
+ 
+-  {% block extra_scripts %}
++{% block extra_scripts %}
++  {{ super() }}
++  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" integrity="sha384-4G8VwKCbFf8gLZZQzQ0jrISFRCGDpa2BkLomqKgkl0vvArkH5AO9M/dwZ0pniS3p" crossorigin="anonymous"></script>
++  <script>
++    window.TrackYourSheets = window.TrackYourSheets || {};
++    window.TrackYourSheets.premiumTotals = {{ premium_totals|tojson }};
++  </script>
++  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+   <script>
+     document.addEventListener('DOMContentLoaded', () => {
+       const debounceTimers = {};
+       const formatNoteStatus = (editor, timestamp) => {
+         if (!editor || !timestamp) {
+-          return 'All changes saved.';
++          return 'Not saved yet.';
+         }
+-        return `Last updated by ${editor} on ${timestamp}`;
++        return `<i class="bi bi-person"></i> ${editor} · <i class="bi bi-clock-history"></i> ${timestamp}`;
+       };
+ 
+       document.querySelectorAll('[data-note-scope]').forEach((textarea) => {
+         textarea.addEventListener('input', () => {
+           const scope = textarea.dataset.noteScope;
+           const workspaceId = textarea.dataset.workspaceId;
+           const statusEl = document.querySelector(`[data-note-status="${scope}"]`);
+           if (statusEl) {
+             statusEl.textContent = 'Saving…';
+           }
+           clearTimeout(debounceTimers[scope]);
+           debounceTimers[scope] = setTimeout(() => {
+             fetch(`/notes/${scope}`, {
+               method: 'POST',
+               headers: {'Content-Type': 'application/json'},
+               body: JSON.stringify({
+                 content: textarea.value,
+                 workspace_id: workspaceId
+               })
+             })
+               .then((response) => (response.ok ? response.json() : Promise.reject(response)))
+               .then((payload) => {
+                 if (statusEl) {
+-                  statusEl.textContent = formatNoteStatus(payload.editor, payload.updated_at_display);
++                  statusEl.innerHTML = formatNoteStatus(payload.editor, payload.updated_at_display);
+                 }
+               })
+               .catch(() => {
+                 if (statusEl) {
+                   statusEl.textContent = 'Unable to save. Check your connection.';
+                 }
+               });
+           }, 600);
+         });
+       });
+ 
+       const chatContainer = document.querySelector('[data-chat-messages]');
+       const chatForm = document.getElementById('workspaceChatForm');
+       const chatStatus = document.querySelector('[data-chat-status]');
+       const chatScroll = document.querySelector('[data-chat-scroll]');
+       const chatRefreshButtons = document.querySelectorAll('[data-chat-refresh]');
+       const initialChatMessages = {{ chat_messages_payload|tojson|safe }};
+ 
+       const formatTimestamp = (value, fallback) => {
+         if (!value) {
+           return fallback || '';
+         }
+         const date = new Date(value);
+         if (Number.isNaN(date.getTime())) {
+           return fallback || '';
+@@ -301,101 +347,122 @@
+           const emptyItem = document.createElement('li');
+           emptyItem.className = 'list-group-item text-center text-muted py-3';
+           emptyItem.textContent = 'Start the conversation by sending the first update below.';
+           chatContainer.append(emptyItem);
+           return;
+         }
+         messages.forEach((message) => {
+           const item = document.createElement('li');
+           item.className = 'list-group-item';
+ 
+           const header = document.createElement('div');
+           header.className = 'd-flex justify-content-between align-items-center';
+ 
+           const author = document.createElement('span');
+           author.className = 'fw-semibold';
+           author.textContent = message.author || 'Unknown user';
+ 
+           const timestamp = document.createElement('span');
+           timestamp.className = 'text-muted small';
+           timestamp.textContent = message.created_at_display || formatTimestamp(message.created_at);
+ 
+           header.append(author, timestamp);
+ 
+           const body = document.createElement('div');
+           body.className = 'mt-1 small';
+-          body.textContent = message.content;
++          if (message.content_html) {
++            body.innerHTML = message.content_html;
++          } else {
++            body.textContent = message.content;
++          }
+ 
+           item.append(header, body);
+           chatContainer.append(item);
+         });
+         if (chatScroll) {
+           chatScroll.scrollTop = chatScroll.scrollHeight;
+         }
+       };
+ 
+       const setChatStatus = (message) => {
+         if (chatStatus) {
+           chatStatus.textContent = message;
+         }
+       };
+ 
+       const refreshChat = (silent = false) => {
+         if (!chatForm) {
+           return;
+         }
+         if (!silent) {
+           setChatStatus('Refreshing…');
+         }
+         const workspaceId = chatForm.dataset.workspaceId;
+         fetch(`/chat/${workspaceId}/messages`)
+           .then((response) => (response.ok ? response.json() : Promise.reject(response)))
+           .then((messages) => {
+             if (Array.isArray(initialChatMessages)) {
+               initialChatMessages.splice(0, initialChatMessages.length, ...messages);
+             }
+             renderMessages(messages);
+             if (!silent) {
+               setChatStatus('Chat updated.');
+             }
+           })
+           .catch(() => {
+             if (!silent) {
+               setChatStatus('Unable to refresh chat right now.');
+             }
+           });
+       };
+ 
+       if (Array.isArray(initialChatMessages) && initialChatMessages.length) {
+         renderMessages(initialChatMessages);
+       }
+ 
+       if (chatForm) {
++        const textarea = chatForm.querySelector('textarea');
++        const emojiButtons = chatForm.querySelectorAll('[data-emoji]');
++        emojiButtons.forEach((button) => {
++          button.addEventListener('click', () => {
++            const emoji = button.getAttribute('data-emoji');
++            if (!textarea || !emoji) {
++              return;
++            }
++            const start = textarea.selectionStart || textarea.value.length;
++            const end = textarea.selectionEnd || textarea.value.length;
++            const current = textarea.value;
++            textarea.value = `${current.slice(0, start)}${emoji} ${current.slice(end)}`;
++            textarea.focus();
++            const cursor = start + emoji.length + 1;
++            textarea.setSelectionRange(cursor, cursor);
++          });
++        });
++
+         chatForm.addEventListener('submit', (event) => {
+           event.preventDefault();
+           const workspaceId = chatForm.dataset.workspaceId;
+-          const textarea = chatForm.querySelector('textarea');
+           if (!textarea) {
+             return;
+           }
+           const message = textarea.value.trim();
+           if (!message) {
+             return;
+           }
+           const submitButton = chatForm.querySelector('button[type="submit"]');
+           if (submitButton) {
+             submitButton.disabled = true;
+           }
+           setChatStatus('Sending…');
+           fetch(`/chat/${workspaceId}/messages`, {
+             method: 'POST',
+             headers: {'Content-Type': 'application/json'},
+             body: JSON.stringify({content: message}),
+           })
+             .then((response) => (response.ok ? response.json() : Promise.reject(response)))
+             .then((payload) => {
+               textarea.value = '';
+               const updatedMessages = Array.isArray(initialChatMessages) ? [...initialChatMessages, payload] : [payload];
+               initialChatMessages.splice(0, initialChatMessages.length, ...updatedMessages);
+               renderMessages(initialChatMessages);
+               setChatStatus('Message delivered.');
+             })
+diff --git a/app/templates/hr/edit_user.html b/app/templates/hr/edit_user.html
+index 9835076e86a6c649630b194e079eb9438709553f..e2c6897f35a9a350224c9bb7fcc0b97ed7586351 100644
+--- a/app/templates/hr/edit_user.html
++++ b/app/templates/hr/edit_user.html
+@@ -1,42 +1,43 @@
+ {% extends 'base.html' %}
+ {% block title %}Employee Profile · TrackYourSheets{% endblock %}
+ {% block content %}
+ {% set active_tab = 'directory' %}
+ <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4">
+   <div>
+     <h1 class="h3 mb-1">Manage {{ user.display_name_for_ui }}</h1>
+     <p class="text-muted mb-0">Update contact info, job details, and review payroll or HR activity for this teammate.</p>
+   </div>
+   <div class="mt-3 mt-lg-0">
+     <a class="btn btn-outline-secondary" href="{{ url_for('hr.directory') }}">Back to directory</a>
+   </div>
+ </div>
+ 
+ {% include 'hr/_subnav.html' %}
+ 
+ <form method="post" class="card shadow-sm mb-4">
++  <input type="hidden" name="intent" value="profile">
+   <div class="card-header bg-light">
+     <h2 class="h6 mb-0">Profile &amp; employment info</h2>
+   </div>
+   <div class="card-body">
+     <div class="row g-3">
+       <div class="col-md-4">
+         <label class="form-label" for="first_name">First name</label>
+         <input type="text" class="form-control" id="first_name" name="first_name" value="{{ user.first_name or '' }}">
+       </div>
+       <div class="col-md-4">
+         <label class="form-label" for="last_name">Last name</label>
+         <input type="text" class="form-control" id="last_name" name="last_name" value="{{ user.last_name or '' }}">
+       </div>
+       <div class="col-md-4">
+         <label class="form-label" for="preferred_name">Preferred name</label>
+         <input type="text" class="form-control" id="preferred_name" name="preferred_name" value="{{ user.preferred_name or '' }}">
+       </div>
+       <div class="col-md-4">
+         <label class="form-label" for="job_title">Job title</label>
+         <input type="text" class="form-control" id="job_title" name="job_title" value="{{ user.job_title or '' }}">
+       </div>
+       <div class="col-md-4">
+         <label class="form-label" for="phone_number">Phone</label>
+         <input type="text" class="form-control" id="phone_number" name="phone_number" value="{{ user.phone_number or '' }}">
+       </div>
+@@ -65,50 +66,230 @@
+       {% if user.producer %}
+       <div class="col-md-4">
+         <label class="form-label" for="producer_display_name">Commission display name</label>
+         <input type="text" class="form-control" id="producer_display_name" name="producer_display_name" value="{{ user.producer.display_name }}">
+       </div>
+       {% endif %}
+       <div class="col-md-4">
+         <label class="form-label" for="emergency_name">Emergency contact</label>
+         <input type="text" class="form-control" id="emergency_name" name="emergency_name" value="{{ user.emergency_contact.name if user.emergency_contact else '' }}" placeholder="Full name">
+       </div>
+       <div class="col-md-4">
+         <label class="form-label" for="emergency_phone">Emergency phone</label>
+         <input type="text" class="form-control" id="emergency_phone" name="emergency_phone" value="{{ user.emergency_contact.phone if user.emergency_contact else '' }}">
+       </div>
+       <div class="col-md-4">
+         <label class="form-label" for="emergency_relation">Relationship</label>
+         <input type="text" class="form-control" id="emergency_relation" name="emergency_relation" value="{{ user.emergency_contact.relationship if user.emergency_contact else '' }}">
+       </div>
+     </div>
+   </div>
+   <div class="card-footer bg-light d-flex justify-content-end">
+     <button type="submit" class="btn btn-primary">Save profile</button>
+   </div>
+ </form>
+ 
++<div class="row g-4 mb-4">
++  <div class="col-xl-6">
++    <div class="card shadow-sm h-100">
++      <div class="card-header bg-light d-flex justify-content-between align-items-center">
++        <h2 class="h6 mb-0">Workspace assignments</h2>
++        <span class="badge bg-primary-soft text-primary">{{ user.workspace_memberships|length }} total</span>
++      </div>
++      <div class="card-body">
++        {% if user.workspace_memberships %}
++        <div class="table-responsive">
++          <table class="table table-sm align-middle">
++            <thead>
++              <tr>
++                <th>Workspace</th>
++                <th>Role</th>
++                <th></th>
++              </tr>
++            </thead>
++            <tbody>
++              {% for membership in user.workspace_memberships %}
++              <tr>
++                <td>
++                  <div class="fw-semibold">{{ membership.workspace.name if membership.workspace else 'Workspace removed' }}</div>
++                  <div class="text-muted small">{% if membership.workspace and membership.workspace.office %}{{ membership.workspace.office.name }} · {% endif %}{{ membership.workspace.organization.name if membership.workspace else '—' }}</div>
++                </td>
++                <td><span class="badge bg-secondary">{{ membership.role or user.role }}</span></td>
++                <td class="text-end">
++                  <form method="post" class="d-inline">
++                    <input type="hidden" name="intent" value="remove_workspace_membership">
++                    <input type="hidden" name="membership_id" value="{{ membership.id }}">
++                    <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
++                  </form>
++                </td>
++              </tr>
++              {% endfor %}
++            </tbody>
++          </table>
++        </div>
++        {% else %}
++        <p class="text-muted small mb-0">No workspace access yet. Add them below.</p>
++        {% endif %}
++      </div>
++      <div class="card-footer bg-light">
++        {% set assigned_ids = user.workspace_memberships | map(attribute='workspace_id') | list %}
++        {% set available_workspaces = all_workspaces | rejectattr('id', 'in', assigned_ids) | list %}
++        <form method="post" class="row g-2 align-items-end">
++          <input type="hidden" name="intent" value="add_workspace_membership">
++          <div class="col-md-7">
++            <label class="form-label">Workspace</label>
++            <select name="workspace_id" class="form-select" required {% if not available_workspaces %}disabled{% endif %}>
++              <option value="">Select workspace</option>
++              {% for workspace in available_workspaces %}
++              <option value="{{ workspace.id }}">{{ workspace.office.name ~ ' · ' if workspace.office }}{{ workspace.name }}</option>
++              {% endfor %}
++              {% if not available_workspaces %}
++              <option value="" disabled>All workspaces assigned</option>
++              {% endif %}
++            </select>
++          </div>
++          <div class="col-md-3">
++            <label class="form-label">Role</label>
++            <select name="workspace_role" class="form-select">
++              <option value="">Default ({{ user.role }})</option>
++              {% for role in ['owner','admin','agent','bookkeeper','hr','producer','staff','viewer'] %}
++              <option value="{{ role }}">{{ role|capitalize }}</option>
++              {% endfor %}
++            </select>
++          </div>
++          <div class="col-md-2">
++            <button type="submit" class="btn btn-primary w-100" {% if not available_workspaces %}disabled{% endif %}>Add</button>
++          </div>
++        </form>
++        <p class="form-text small mb-0">Assignments sync with dashboard chat, notes, and payroll visibility.</p>
++      </div>
++    </div>
++  </div>
++  <div class="col-xl-6">
++    <div class="card shadow-sm h-100">
++      <div class="card-header bg-light d-flex justify-content-between align-items-center">
++        <h2 class="h6 mb-0">Office coverage</h2>
++        <span class="badge bg-primary-soft text-primary">{{ user.office_memberships|length }} total</span>
++      </div>
++      <div class="card-body">
++        {% if user.office_memberships %}
++        <ul class="list-group list-group-flush mb-3">
++          {% for membership in user.office_memberships %}
++          <li class="list-group-item d-flex justify-content-between align-items-center">
++            <div>
++              <div class="fw-semibold">{{ membership.office.name if membership.office else 'Office removed' }}</div>
++              <div class="text-muted small">Added {{ membership.created_at.strftime('%b %d, %Y') if membership.created_at else '—' }}</div>
++            </div>
++            <form method="post" class="ms-3">
++              <input type="hidden" name="intent" value="remove_office_membership">
++              <input type="hidden" name="membership_id" value="{{ membership.id }}">
++              <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
++            </form>
++          </li>
++          {% endfor %}
++        </ul>
++        {% else %}
++        <p class="text-muted small mb-0">No office assignments yet.</p>
++        {% endif %}
++      </div>
++      <div class="card-footer bg-light">
++        {% set assigned_office_ids = user.office_memberships | map(attribute='office_id') | list %}
++        {% set available_offices = all_offices | rejectattr('id', 'in', assigned_office_ids) | list %}
++        <form method="post" class="row g-2 align-items-end">
++          <input type="hidden" name="intent" value="add_office_membership">
++          <div class="col-md-8">
++            <label class="form-label">Office</label>
++            <select name="office_id" class="form-select" required {% if not available_offices %}disabled{% endif %}>
++              <option value="">Select office</option>
++              {% for office in available_offices %}
++              <option value="{{ office.id }}">{{ office.name }}</option>
++              {% endfor %}
++              {% if not available_offices %}
++              <option value="" disabled>All offices assigned</option>
++              {% endif %}
++            </select>
++          </div>
++          <div class="col-md-4">
++            <button type="submit" class="btn btn-primary w-100" {% if not available_offices %}disabled{% endif %}>Add</button>
++          </div>
++        </form>
++        <p class="form-text small mb-0">Offices determine onboarding cohorts, policy acknowledgements, and HR alerts.</p>
++      </div>
++    </div>
++  </div>
++</div>
++
++<div class="row g-4 mb-4">
++  <div class="col-xl-6">
++    <div class="card shadow-sm h-100">
++      <div class="card-header bg-light d-flex justify-content-between align-items-center">
++        <h2 class="h6 mb-0">Compensation</h2>
++        <span class="badge bg-info-soft text-info">{{ user.compensation_currency }}</span>
++      </div>
++      <form method="post">
++        <input type="hidden" name="intent" value="compensation">
++        <div class="card-body">
++          <p class="text-muted small">Capture base salary, bonus plans, and notes for payroll exports.</p>
++          <div class="row g-3">
++            <div class="col-md-4">
++              <label class="form-label">Currency</label>
++              <input type="text" name="compensation_currency" class="form-control" value="{{ user.compensation_currency }}" maxlength="8">
++            </div>
++            <div class="col-md-4">
++              <label class="form-label">Base salary</label>
++              <div class="input-group">
++                <span class="input-group-text">$</span>
++                <input type="number" step="0.01" min="0" name="base_salary" class="form-control" value="{{ '{:,.2f}'.format(user.base_salary) if user.base_salary is not none else '' }}" placeholder="0.00">
++              </div>
++            </div>
++            <div class="col-md-4">
++              <label class="form-label">Bonus target</label>
++              <div class="input-group">
++                <span class="input-group-text">$</span>
++                <input type="number" step="0.01" min="0" name="bonus_target" class="form-control" value="{{ '{:,.2f}'.format(user.bonus_target) if user.bonus_target is not none else '' }}" placeholder="0.00">
++              </div>
++            </div>
++            <div class="col-md-6">
++              <label class="form-label">Bonus plan</label>
++              <input type="text" name="bonus_plan" class="form-control" value="{{ user.bonus_plan or '' }}" placeholder="Quarterly accelerator, renewals, etc.">
++            </div>
++            <div class="col-12">
++              <label class="form-label">Notes</label>
++              <textarea name="compensation_notes" rows="3" class="form-control" placeholder="Eligibility, draw recoverables, commission overrides…">{{ user.compensation_notes or '' }}</textarea>
++              <div class="form-text small">Visible to HR, admins, and payroll processors.</div>
++            </div>
++          </div>
++        </div>
++        <div class="card-footer bg-light d-flex justify-content-between align-items-center">
++          <span class="text-muted small">{{ user.compensation_summary }}</span>
++          <button type="submit" class="btn btn-primary">Save compensation</button>
++        </div>
++      </form>
++    </div>
++  </div>
++</div>
++
+ <div class="row g-4">
+   <div class="col-xl-4">
+     <div class="card shadow-sm h-100">
+       <div class="card-header bg-light">
+         <h2 class="h6 mb-0">Document acknowledgements</h2>
+       </div>
+       <div class="card-body">
+         {% if acknowledgements %}
+         <ul class="list-group list-group-flush">
+           {% for ack in acknowledgements %}
+           <li class="list-group-item">
+             <div class="fw-semibold">{{ ack.document.title }}</div>
+             <div class="text-muted small">{{ ack.acknowledged_at.strftime('%b %d, %Y %I:%M %p') if ack.acknowledged_at else '—' }}</div>
+           </li>
+           {% endfor %}
+         </ul>
+         {% else %}
+         <p class="text-muted small mb-0">No acknowledgements recorded yet.</p>
+         {% endif %}
+       </div>
+     </div>
+   </div>
+   <div class="col-xl-4">
+     <div class="card shadow-sm h-100">
+       <div class="card-header bg-light">
+diff --git a/app/templates/imports/manual.html b/app/templates/imports/manual.html
+index 86e16d79313018f95d7816a76847e4037ae08557..7a3e021231bdfb06abb013a4542f90727d91e2a4 100644
+--- a/app/templates/imports/manual.html
++++ b/app/templates/imports/manual.html
+@@ -45,55 +45,55 @@
+               </select>
+             </div>
+             <div class="col-md-4">
+               <label class="form-label">Premium</label>
+               <div class="input-group">
+                 <span class="input-group-text">$</span>
+                 <input type="number" step="0.01" min="0" name="premium" class="form-control" placeholder="0.00">
+               </div>
+             </div>
+             <div class="col-md-4">
+               <label class="form-label">Commission</label>
+               <div class="input-group">
+                 <span class="input-group-text">$</span>
+                 <input type="number" step="0.01" min="0" name="commission" class="form-control" placeholder="0.00">
+               </div>
+             </div>
+             <div class="col-md-4">
+               <label class="form-label">Split %</label>
+               <div class="input-group">
+                 <input type="number" step="0.01" min="0" max="100" name="split_pct" class="form-control" placeholder="100">
+                 <span class="input-group-text">%</span>
+               </div>
+             </div>
+             <div class="col-md-6">
+               <label class="form-label">Revenue category</label>
+-              <input list="categoryOptions" name="category" class="form-control" placeholder="auto / life / health / ...">
+-              <datalist id="categoryOptions">
++              <select name="category" class="form-select" required>
++                <option value="">Select a category</option>
+                 {% for category in categories %}
+-                <option value="{{ category }}">
++                <option value="{{ category }}">{{ category }}</option>
+                 {% endfor %}
+-              </datalist>
++              </select>
+             </div>
+             <div class="col-md-6">
+               <label class="form-label">Product / line of business</label>
+               <input type="text" name="product_type" class="form-control" placeholder="Auto, Life, Health, Commercial...">
+             </div>
+             <div class="col-12">
+               <label class="form-label">Basis / context</label>
+               <input type="text" name="basis" class="form-control" placeholder="Manual adjustment, bonus, renewal override...">
+             </div>
+             <div class="col-12">
+               <label class="form-label">Notes</label>
+               <textarea name="notes" class="form-control" rows="4" placeholder="Use this space for supporting details"></textarea>
+               <span class="text-muted small">Notes appear to admins and agents reviewing reports.</span>
+             </div>
+           </div>
+           <div class="d-flex justify-content-end mt-4">
+             <button type="submit" class="btn btn-primary">Save commission</button>
+           </div>
+         </form>
+       </div>
+     </div>
+   </div>
+ </div>
+ {% endblock %}
+diff --git a/app/templates/landing.html b/app/templates/landing.html
+index 3c19f75abf75b15011b09c4c39f03a0478c30506..cbef13ffc8a1c2672f08a6658bd9b9b876fa6bb6 100644
+--- a/app/templates/landing.html
++++ b/app/templates/landing.html
+@@ -125,50 +125,75 @@
+   <section id="features" class="py-6 bg-white landing-section">
+     <div class="container">
+       <div class="row justify-content-center text-center mb-5">
+         <div class="col-lg-8">
+           <span class="badge rounded-pill bg-primary-soft text-primary fw-semibold">Capabilities</span>
+           <h2 class="display-6 fw-bold mt-3">Everything your commission operations team needs in one workspace.</h2>
+           <p class="text-muted lead">TrackYourSheets centralises disparate carrier data, automates reconciliations, and empowers producers with live scorecards and payouts.</p>
+         </div>
+       </div>
+       <div class="row g-4">
+         {% for feature in feature_sections %}
+         <div class="col-md-4">
+           <div class="feature-card h-100 animate-rise">
+             <div class="icon-badge mb-3">
+               <i class="bi {{ feature.icon }}"></i>
+             </div>
+             <h3 class="h4 mb-2">{{ feature.title }}</h3>
+             <p class="text-muted">{{ feature.description }}</p>
+           </div>
+         </div>
+         {% endfor %}
+       </div>
+     </div>
+   </section>
+ 
++  <section class="py-6 landing-section landing-section--muted">
++    <div class="container">
++      <div class="row justify-content-between align-items-center mb-5 g-4">
++        <div class="col-lg-6">
++          <span class="badge rounded-pill bg-warning-soft text-warning fw-semibold">Guides &amp; templates</span>
++          <h2 class="display-6 fw-bold mt-3">Launch faster with curated onboarding resources.</h2>
++          <p class="text-muted lead">Download the Excel signup sheet, revisit the interactive guide, and share messaging best practices so every teammate starts strong.</p>
++        </div>
++      </div>
++      <div class="row g-4">
++        {% for resource in resource_links %}
++        <div class="col-md-4">
++          <a class="card h-100 shadow-sm text-decoration-none" href="{{ resource.href }}" target="{{ '_blank' if resource.href.startswith('http') and 'trackyoursheets' not in resource.href else '_self' }}">
++            <div class="card-body">
++              <div class="icon-badge mb-3"><i class="bi {{ resource.icon }}"></i></div>
++              <h3 class="h5 text-primary">{{ resource.title }}</h3>
++              <p class="text-muted small mb-0">{{ resource.description }}</p>
++            </div>
++          </a>
++        </div>
++        {% endfor %}
++      </div>
++    </div>
++  </section>
++
+   <section id="personas" class="py-6 landing-section landing-section--muted">
+     <div class="container">
+       <div class="row justify-content-between align-items-center mb-5 g-4">
+         <div class="col-lg-7">
+           <span class="badge rounded-pill bg-success-soft text-success fw-semibold">Teams we empower</span>
+           <h2 class="display-6 fw-bold mt-3">Purpose-built for every stakeholder who touches commission data.</h2>
+           <p class="text-muted lead">From agency principals to frontline producers, TrackYourSheets turns complex, messy data into insights, playbooks, and confident decisions.</p>
+         </div>
+         <div class="col-lg-4 text-lg-end">
+           <a href="{{ url_for('auth.signup') }}" class="btn btn-success btn-lg shadow-sm">See onboarding plans</a>
+         </div>
+       </div>
+       <div class="row g-4">
+         {% for persona in persona_sections %}
+         <div class="col-md-4">
+           <div class="persona-card h-100 animate-tilt">
+             <div class="d-flex align-items-center gap-2 mb-3">
+               <span class="icon-badge icon-badge--alt"><i class="bi {{ persona.icon }}"></i></span>
+               <h3 class="h5 mb-0">{{ persona.title }}</h3>
+             </div>
+             <p class="text-muted">{{ persona.summary }}</p>
+             <ul class="list-unstyled d-grid gap-2 mt-4">
+               {% for bullet in persona.focus_points %}
+               <li class="d-flex gap-2 align-items-start">
+                 <span class="text-success"><i class="bi bi-stars"></i></span>
+diff --git a/app/templates/messages/index.html b/app/templates/messages/index.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..6895956cde2466281a42f3379a2f87043c03bc65
+--- /dev/null
++++ b/app/templates/messages/index.html
+@@ -0,0 +1,73 @@
++{% extends 'base.html' %}
++{% block title %}Messages · TrackYourSheets{% endblock %}
++{% block content %}
++<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4 gap-3">
++  <div>
++    <h1 class="h3 mb-1">Private &amp; group messages</h1>
++    <p class="text-muted mb-0">Collaborate with teammates across offices without leaving TrackYourSheets. Conversations respect organisation roles.</p>
++  </div>
++  <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
++</div>
++
++<div class="row g-4">
++  <div class="col-lg-7">
++    <div class="card shadow-sm h-100">
++      <div class="card-header bg-light d-flex justify-content-between align-items-center">
++        <h2 class="h6 mb-0">Your conversations</h2>
++        <span class="badge bg-primary-soft text-primary">{{ threads|length }} active</span>
++      </div>
++      <div class="list-group list-group-flush">
++        {% for thread in threads %}
++        <a class="list-group-item list-group-item-action" href="{{ url_for('main.view_message_thread', thread_id=thread.id) }}">
++          <div class="d-flex justify-content-between align-items-start gap-3">
++            <div>
++              <div class="fw-semibold">{{ thread.name }}</div>
++              <div class="text-muted small">Participants: {{ thread.display_participants | join(', ') }}</div>
++              {% if thread.preview %}
++              <div class="text-muted small mt-1">{{ thread.preview.author }}: {{ thread.preview.body }}</div>
++              {% endif %}
++            </div>
++            <span class="badge {{ 'bg-primary-soft text-primary' if thread.is_group else 'bg-secondary-soft text-secondary' }}">{{ 'Group' if thread.is_group else 'Direct' }}</span>
++          </div>
++        </a>
++        {% else %}
++        <div class="list-group-item text-center text-muted py-4">No messages yet. Start a conversation on the right.</div>
++        {% endfor %}
++      </div>
++    </div>
++  </div>
++  <div class="col-lg-5">
++    <div class="card shadow-sm">
++      <div class="card-header bg-light">
++        <h2 class="h6 mb-0">Start a new conversation</h2>
++      </div>
++      <form method="post">
++        <div class="card-body">
++          <div class="mb-3">
++            <label class="form-label">Name (optional)</label>
++            <input type="text" name="name" class="form-control" placeholder="Team huddle, Client follow-up, …">
++            <div class="form-text">We’ll auto-name the conversation if you leave this blank.</div>
++          </div>
++          <div class="mb-3">
++            <label class="form-label">Participants</label>
++            <select name="participants" class="form-select" multiple size="6" required>
++              {% for teammate in teammates %}
++              <option value="{{ teammate.id }}">{{ teammate.display_name_for_ui }} ({{ teammate.email }})</option>
++              {% endfor %}
++            </select>
++            <div class="form-text">You’re included automatically. Select one teammate for a private chat or several for a group.</div>
++          </div>
++          <div class="mb-0">
++            <label class="form-label">Kick-off message (optional)</label>
++            <textarea name="message" rows="3" class="form-control" placeholder="Welcome or agenda…"></textarea>
++          </div>
++        </div>
++        <div class="card-footer bg-light d-flex justify-content-between align-items-center">
++          <span class="text-muted small">Messages respect HR and admin access rules.</span>
++          <button type="submit" class="btn btn-primary">Create</button>
++        </div>
++      </form>
++    </div>
++  </div>
++</div>
++{% endblock %}
+diff --git a/app/templates/messages/thread.html b/app/templates/messages/thread.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..651b7724d1559720b7c7c3c1fe4172635b42493c
+--- /dev/null
++++ b/app/templates/messages/thread.html
+@@ -0,0 +1,66 @@
++{% extends 'base.html' %}
++{% block title %}Conversation · TrackYourSheets{% endblock %}
++{% block content %}
++<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4 gap-3">
++  <div>
++    <h1 class="h3 mb-1">{{ thread.name }}</h1>
++    <p class="text-muted mb-0">Participants: {{ participants_label }}</p>
++  </div>
++  <a class="btn btn-outline-secondary" href="{{ url_for('main.messages_home') }}">Back to messages</a>
++</div>
++
++<div class="row g-4">
++  <div class="col-lg-8">
++    <div class="card shadow-sm h-100">
++      <div class="card-header bg-light d-flex justify-content-between align-items-center">
++        <h2 class="h6 mb-0">Conversation history</h2>
++        <span class="badge {{ 'bg-primary-soft text-primary' if thread.is_group else 'bg-secondary-soft text-secondary' }}">{{ 'Group' if thread.is_group else 'Direct' }}</span>
++      </div>
++      <div class="card-body" style="max-height: 520px; overflow-y: auto;">
++        {% if messages %}
++        <ul class="list-unstyled mb-0 d-flex flex-column gap-3">
++          {% for message in messages %}
++          <li class="p-3 border rounded">
++            <div class="d-flex justify-content-between align-items-start gap-3">
++              <div>
++                <div class="fw-semibold">{{ message.author.display_name_for_ui if message.author else 'Unknown user' }}</div>
++                <div class="text-muted small">{{ message.created_at.strftime('%b %d, %Y %I:%M %p') if message.created_at else '' }}</div>
++              </div>
++            </div>
++            <div class="mt-2">{{ message.rendered_content|safe }}</div>
++          </li>
++          {% endfor %}
++        </ul>
++        {% else %}
++        <div class="text-center text-muted py-5">No messages yet. Send the first update below.</div>
++        {% endif %}
++      </div>
++      <div class="card-footer bg-light">
++        <form method="post" class="d-flex flex-column gap-2">
++          <label class="form-label" for="conversationMessage">Send a message</label>
++          <textarea id="conversationMessage" name="content" rows="3" class="form-control" required placeholder="Share an update, request approvals, or drop a reminder."></textarea>
++          <div class="d-flex justify-content-between align-items-center">
++            <small class="text-muted">Use @mentions and emoji just like workspace chat.</small>
++            <button type="submit" class="btn btn-primary">Send</button>
++          </div>
++        </form>
++      </div>
++    </div>
++  </div>
++  <div class="col-lg-4">
++    <div class="card shadow-sm">
++      <div class="card-header bg-light">
++        <h2 class="h6 mb-0">Participants</h2>
++      </div>
++      <ul class="list-group list-group-flush">
++        {% for participant in thread.participants %}
++        <li class="list-group-item">
++          <div class="fw-semibold">{{ participant.user.display_name_for_ui if participant.user else 'Unknown user' }}</div>
++          <div class="text-muted small">Role: {{ participant.role|capitalize }}</div>
++        </li>
++        {% endfor %}
++      </ul>
++    </div>
++  </div>
++</div>
++{% endblock %}
+diff --git a/app/templates/settings.html b/app/templates/settings.html
+index 6e59f9ece316d885025143c5bd59c896f2234c5d..ed585cd94b6204bc49ebbb0c45c352d0ec5dc8f6 100644
+--- a/app/templates/settings.html
++++ b/app/templates/settings.html
+@@ -131,50 +131,98 @@
+           {% else %}
+           <li class="list-group-item text-muted">No workspace access yet.</li>
+           {% endfor %}
+         </ul>
+         {% if joinable_workspaces %}
+         <form method="post" action="{{ url_for('main.join_workspace') }}" class="row g-2 align-items-end">
+           <div class="col-12 col-md-8">
+             <label class="form-label">Join another workspace</label>
+             <select name="workspace_id" class="form-select" required>
+               <option value="">Select workspace</option>
+               {% for workspace in joinable_workspaces %}
+               <option value="{{ workspace.id }}">{{ workspace.office.name ~ ' · ' if workspace.office }}{{ workspace.name }}</option>
+               {% endfor %}
+             </select>
+           </div>
+           <div class="col-12 col-md-4">
+             <input type="hidden" name="next" value="{{ request.url }}">
+             <button class="btn btn-primary w-100" type="submit">Join workspace</button>
+           </div>
+         </form>
+         {% else %}
+         <p class="text-muted small mb-0">You're connected to every workspace in your organization.</p>
+         {% endif %}
+       </div>
+     </div>
++    <div class="card shadow-sm mt-4">
++      <div class="card-header bg-light">
++        <h2 class="h6 mb-0">Workspace &amp; office roles</h2>
++      </div>
++      <div class="card-body">
++        <p class="text-muted small">Review how you're mapped across the organisation. Role labels update instantly when admins adjust assignments.</p>
++        <div class="table-responsive">
++          <table class="table table-sm align-middle">
++            <thead class="table-light">
++              <tr>
++                <th scope="col">Scope</th>
++                <th scope="col">Name</th>
++                <th scope="col">Role</th>
++                <th scope="col">Joined</th>
++              </tr>
++            </thead>
++            <tbody>
++              {% for membership in current_user.workspace_memberships %}
++              <tr>
++                <td><span class="badge bg-primary-soft text-primary">Workspace</span></td>
++                <td>
++                  <div class="fw-semibold">{{ membership.workspace.name if membership.workspace else 'Workspace removed' }}</div>
++                  <div class="text-muted small">{% if membership.workspace and membership.workspace.office %}{{ membership.workspace.office.name }} · {% endif %}{{ membership.workspace.organization.name if membership.workspace else '' }}</div>
++                </td>
++                <td><span class="badge bg-secondary">{{ membership.role or current_user.role }}</span></td>
++                <td class="text-muted small">{{ membership.created_at.strftime('%b %d, %Y') if membership.created_at else '—' }}</td>
++              </tr>
++              {% endfor %}
++              {% for membership in current_user.office_memberships %}
++              <tr>
++                <td><span class="badge bg-success-soft text-success">Office</span></td>
++                <td>
++                  <div class="fw-semibold">{{ membership.office.name if membership.office else 'Office removed' }}</div>
++                </td>
++                <td><span class="badge bg-secondary">{{ current_user.role }}</span></td>
++                <td class="text-muted small">{{ membership.created_at.strftime('%b %d, %Y') if membership.created_at else '—' }}</td>
++              </tr>
++              {% endfor %}
++              {% if (current_user.workspace_memberships|length == 0) and (current_user.office_memberships|length == 0) %}
++              <tr>
++                <td colspan="4" class="text-center text-muted py-3">No assignments yet. Ask an admin or HR specialist to add you to a workspace.</td>
++              </tr>
++              {% endif %}
++            </tbody>
++          </table>
++        </div>
++      </div>
++    </div>
+   </div>
+ 
+   <div class="col-xl-8">
+     <div class="card shadow-sm">
+       <div class="card-header bg-light d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-3">
+         <div>
+           <h2 class="h6 mb-0">Subscription plan</h2>
+           <p class="text-muted small mb-0">Current plan: {{ organization.plan.name if organization.plan else 'Not set' }}</p>
+         </div>
+         {% if can_manage_plan %}
+         <span class="badge bg-primary-soft text-primary">Admins &amp; agents can edit</span>
+         {% else %}
+         <span class="badge bg-secondary">Read only</span>
+         {% endif %}
+       </div>
+       <div class="card-body">
+         {% if not plans %}
+         <p class="text-muted mb-0">No plans are configured yet. Email <a href="mailto:{{ support_email }}">{{ support_email }}</a> to add tiers.</p>
+         {% else %}
+         {% if stripe_enabled %}
+         <div class="alert alert-info d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-2" role="alert">
+           <div>
+             <strong>Stripe billing is enabled.</strong> Select a plan and continue to secure checkout to confirm subscription changes.
+           </div>
+           {% if stripe_mode %}
+diff --git a/requirements.txt b/requirements.txt
+index f4da1a7694c41f25bf719cde6c209dead8ae78bc..3127d2caa166a74d2b22fe80df648ba4529d5fc0 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,18 +1,19 @@
+ Flask==3.0.2
+ Flask-SQLAlchemy==3.1.1
+ Flask-Migrate==4.0.5
+ Flask-Login==0.6.3
+ python-dotenv==1.0.1
+ stripe==8.9.0
+ pandas==2.2.2
+ pdfplumber==0.11.0
+ SQLAlchemy==2.0.25
+ alembic==1.13.1
+ werkzeug==3.0.1
+ itsdangerous==2.1.2
+ psycopg2-binary==2.9.9
+ PyJWT==2.8.0
+ requests==2.31.0
+ reportlab==4.0.9
+ resend==0.9.1
++openpyxl==3.1.2
+ 
+

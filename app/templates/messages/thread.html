@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block title %}Conversation · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-1">{{ thread.name }}</h1>
+    <p class="text-muted mb-0">Participants: {{ participants_label }}</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('main.messages_home') }}">Back to messages</a>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-8">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Conversation history</h2>
+        <span class="badge {{ 'bg-primary-soft text-primary' if thread.is_group else 'bg-secondary-soft text-secondary' }}">{{ 'Group' if thread.is_group else 'Direct' }}</span>
+      </div>
+      <div class="card-body" style="max-height: 520px; overflow-y: auto;">
+        {% if messages %}
+        <ul class="list-unstyled mb-0 d-flex flex-column gap-3">
+          {% for message in messages %}
+          <li class="p-3 border rounded">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <div>
+                <div class="fw-semibold">{{ message.author.display_name_for_ui if message.author else 'Unknown user' }}</div>
+                <div class="text-muted small">{{ message.created_at.strftime('%b %d, %Y %I:%M %p') if message.created_at else '' }}</div>
+              </div>
+            </div>
+            <div class="mt-2">{{ message.rendered_content|safe }}</div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="text-center text-muted py-5">No messages yet. Send the first update below.</div>
+        {% endif %}
+      </div>
+      <div class="card-footer bg-light">
+        <form method="post" class="d-flex flex-column gap-2">
+          <label class="form-label" for="conversationMessage">Send a message</label>
+          <textarea id="conversationMessage" name="content" rows="3" class="form-control" required placeholder="Share an update, request approvals, or drop a reminder."></textarea>
+          <div class="d-flex justify-content-between align-items-center">
+            <small class="text-muted">Use @mentions and emoji just like workspace chat.</small>
+            <button type="submit" class="btn btn-primary">Send</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light">
+        <h2 class="h6 mb-0">Participants</h2>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for participant in thread.participants %}
+        <li class="list-group-item">
+          <div class="fw-semibold">{{ participant.user.display_name_for_ui if participant.user else 'Unknown user' }}</div>
+          <div class="text-muted small">Role: {{ participant.role|capitalize }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

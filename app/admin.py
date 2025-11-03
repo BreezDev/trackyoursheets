@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 load_dotenv()
+import csv
 import hashlib
 import io
 import secrets
@@ -41,6 +42,8 @@ from .models import (
     SubscriptionPlan,
     User,
     Workspace,
+    WorkspaceMembership,
+    OfficeMembership,
 )
 from .workspaces import get_accessible_workspaces, get_accessible_workspace_ids
 from .resend_email import send_workspace_invitation
@@ -353,9 +356,15 @@ def create_user():
         user.record_workspace_membership(invited_workspace, role=role)
 
     db.session.commit()
-    if invited_workspace and email:
-        login_target = url_for(
-            "main.dashboard", workspace_id=invited_workspace.id, _external=True
+    if email:
+        login_target = (
+            url_for(
+                "main.dashboard",
+                workspace_id=invited_workspace.id,
+                _external=True,
+            )
+            if invited_workspace
+            else url_for("main.dashboard", _external=True)
         )
         login_url = url_for(
             "auth.login",
@@ -1026,6 +1035,129 @@ def delete_category(category_id: int):
     db.session.commit()
     flash("Category removed.", "info")
     return redirect(url_for("admin.manage_categories"))
+
+
+@admin_bp.route("/users/compensation", methods=["GET", "POST"])
+def manage_user_compensation():
+    org = Organization.query.get_or_404(current_user.org_id)
+
+    def _parse_decimal(value: str | None) -> Decimal | None:
+        if not value:
+            return None
+        try:
+            return Decimal(value)
+        except (InvalidOperation, TypeError):
+            return None
+
+    users = (
+        User.query.filter_by(org_id=org.id)
+        .options(
+            joinedload(User.workspace_memberships)
+            .joinedload(WorkspaceMembership.workspace)
+            .joinedload(Workspace.office),
+            joinedload(User.office_memberships).joinedload(OfficeMembership.office),
+        )
+        .order_by(User.first_name.asc(), User.last_name.asc(), User.email.asc())
+        .all()
+    )
+
+    if request.args.get("export") == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(
+            [
+                "First name",
+                "Last name",
+                "Email",
+                "Role",
+                "Base salary",
+                "Bonus plan",
+                "Bonus target",
+                "Workspaces",
+                "Offices",
+            ]
+        )
+        for user in users:
+            workspace_labels = [
+                membership.workspace.name
+                for membership in getattr(user, "workspace_memberships", [])
+                if membership.workspace
+            ]
+            office_labels = [
+                membership.office.name
+                for membership in getattr(user, "office_memberships", [])
+                if membership.office
+            ]
+            writer.writerow(
+                [
+                    user.first_name or "",
+                    user.last_name or "",
+                    user.email,
+                    user.role,
+                    user.base_salary or "",
+                    user.bonus_plan or "",
+                    user.bonus_target or "",
+                    ", ".join(workspace_labels),
+                    ", ".join(office_labels),
+                ]
+            )
+        output.seek(0)
+        return send_file(
+            io.BytesIO(output.getvalue().encode("utf-8")),
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name="compensation_export.csv",
+        )
+
+    if request.method == "POST":
+        user_id = request.form.get("user_id")
+        try:
+            user_id_int = int(user_id) if user_id else None
+        except (TypeError, ValueError):
+            user_id_int = None
+        user = (
+            User.query.filter_by(id=user_id_int, org_id=org.id).first()
+            if user_id_int
+            else None
+        )
+        if not user:
+            flash("User not found.", "danger")
+            return redirect(url_for("admin.manage_user_compensation"))
+
+        base_raw = request.form.get("base_salary")
+        bonus_raw = request.form.get("bonus_target")
+        base_salary = _parse_decimal(base_raw)
+        bonus_target = _parse_decimal(bonus_raw)
+        if base_raw and base_salary is None:
+            flash("Enter a valid base salary amount.", "danger")
+            return redirect(url_for("admin.manage_user_compensation"))
+        if bonus_raw and bonus_target is None:
+            flash("Enter a valid bonus target.", "danger")
+            return redirect(url_for("admin.manage_user_compensation"))
+
+        user.update_compensation(
+            currency=request.form.get("currency") or user.compensation_currency,
+            base_salary=base_salary,
+            bonus_plan=request.form.get("bonus_plan") or None,
+            bonus_target=bonus_target,
+            notes=request.form.get("notes") or user.compensation_notes,
+        )
+        db.session.add(user)
+        db.session.commit()
+        flash("Compensation updated.", "success")
+        return redirect(url_for("admin.manage_user_compensation"))
+
+    totals = {
+        "base": sum((user.base_salary or Decimal("0")) for user in users),
+        "bonus": sum((user.bonus_target or Decimal("0")) for user in users),
+    }
+
+    return render_template(
+        "admin/users_compensation.html",
+        users=users,
+        totals=totals,
+        active_tab="users",
+    )
 
 
 @admin_bp.route("/payroll", methods=["GET", "POST"])

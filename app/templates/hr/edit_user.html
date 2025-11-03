@@ -15,6 +15,7 @@
 {% include 'hr/_subnav.html' %}
 
 <form method="post" class="card shadow-sm mb-4">
+  <input type="hidden" name="intent" value="profile">
   <div class="card-header bg-light">
     <h2 class="h6 mb-0">Profile &amp; employment info</h2>
   </div>
@@ -86,6 +87,186 @@
     <button type="submit" class="btn btn-primary">Save profile</button>
   </div>
 </form>
+
+<div class="row g-4 mb-4">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Workspace assignments</h2>
+        <span class="badge bg-primary-soft text-primary">{{ user.workspace_memberships|length }} total</span>
+      </div>
+      <div class="card-body">
+        {% if user.workspace_memberships %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>Workspace</th>
+                <th>Role</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for membership in user.workspace_memberships %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ membership.workspace.name if membership.workspace else 'Workspace removed' }}</div>
+                  <div class="text-muted small">{% if membership.workspace and membership.workspace.office %}{{ membership.workspace.office.name }} · {% endif %}{{ membership.workspace.organization.name if membership.workspace else '—' }}</div>
+                </td>
+                <td><span class="badge bg-secondary">{{ membership.role or user.role }}</span></td>
+                <td class="text-end">
+                  <form method="post" class="d-inline">
+                    <input type="hidden" name="intent" value="remove_workspace_membership">
+                    <input type="hidden" name="membership_id" value="{{ membership.id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">No workspace access yet. Add them below.</p>
+        {% endif %}
+      </div>
+      <div class="card-footer bg-light">
+        {% set assigned_ids = user.workspace_memberships | map(attribute='workspace_id') | list %}
+        {% set available_workspaces = all_workspaces | rejectattr('id', 'in', assigned_ids) | list %}
+        <form method="post" class="row g-2 align-items-end">
+          <input type="hidden" name="intent" value="add_workspace_membership">
+          <div class="col-md-7">
+            <label class="form-label">Workspace</label>
+            <select name="workspace_id" class="form-select" required {% if not available_workspaces %}disabled{% endif %}>
+              <option value="">Select workspace</option>
+              {% for workspace in available_workspaces %}
+              <option value="{{ workspace.id }}">{{ workspace.office.name ~ ' · ' if workspace.office }}{{ workspace.name }}</option>
+              {% endfor %}
+              {% if not available_workspaces %}
+              <option value="" disabled>All workspaces assigned</option>
+              {% endif %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Role</label>
+            <select name="workspace_role" class="form-select">
+              <option value="">Default ({{ user.role }})</option>
+              {% for role in ['owner','admin','agent','bookkeeper','hr','producer','staff','viewer'] %}
+              <option value="{{ role }}">{{ role|capitalize }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-2">
+            <button type="submit" class="btn btn-primary w-100" {% if not available_workspaces %}disabled{% endif %}>Add</button>
+          </div>
+        </form>
+        <p class="form-text small mb-0">Assignments sync with dashboard chat, notes, and payroll visibility.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Office coverage</h2>
+        <span class="badge bg-primary-soft text-primary">{{ user.office_memberships|length }} total</span>
+      </div>
+      <div class="card-body">
+        {% if user.office_memberships %}
+        <ul class="list-group list-group-flush mb-3">
+          {% for membership in user.office_memberships %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <div class="fw-semibold">{{ membership.office.name if membership.office else 'Office removed' }}</div>
+              <div class="text-muted small">Added {{ membership.created_at.strftime('%b %d, %Y') if membership.created_at else '—' }}</div>
+            </div>
+            <form method="post" class="ms-3">
+              <input type="hidden" name="intent" value="remove_office_membership">
+              <input type="hidden" name="membership_id" value="{{ membership.id }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+            </form>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted small mb-0">No office assignments yet.</p>
+        {% endif %}
+      </div>
+      <div class="card-footer bg-light">
+        {% set assigned_office_ids = user.office_memberships | map(attribute='office_id') | list %}
+        {% set available_offices = all_offices | rejectattr('id', 'in', assigned_office_ids) | list %}
+        <form method="post" class="row g-2 align-items-end">
+          <input type="hidden" name="intent" value="add_office_membership">
+          <div class="col-md-8">
+            <label class="form-label">Office</label>
+            <select name="office_id" class="form-select" required {% if not available_offices %}disabled{% endif %}>
+              <option value="">Select office</option>
+              {% for office in available_offices %}
+              <option value="{{ office.id }}">{{ office.name }}</option>
+              {% endfor %}
+              {% if not available_offices %}
+              <option value="" disabled>All offices assigned</option>
+              {% endif %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <button type="submit" class="btn btn-primary w-100" {% if not available_offices %}disabled{% endif %}>Add</button>
+          </div>
+        </form>
+        <p class="form-text small mb-0">Offices determine onboarding cohorts, policy acknowledgements, and HR alerts.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Compensation</h2>
+        <span class="badge bg-info-soft text-info">{{ user.compensation_currency }}</span>
+      </div>
+      <form method="post">
+        <input type="hidden" name="intent" value="compensation">
+        <div class="card-body">
+          <p class="text-muted small">Capture base salary, bonus plans, and notes for payroll exports.</p>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Currency</label>
+              <input type="text" name="compensation_currency" class="form-control" value="{{ user.compensation_currency }}" maxlength="8">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Base salary</label>
+              <div class="input-group">
+                <span class="input-group-text">$</span>
+                <input type="number" step="0.01" min="0" name="base_salary" class="form-control" value="{{ '{:,.2f}'.format(user.base_salary) if user.base_salary is not none else '' }}" placeholder="0.00">
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Bonus target</label>
+              <div class="input-group">
+                <span class="input-group-text">$</span>
+                <input type="number" step="0.01" min="0" name="bonus_target" class="form-control" value="{{ '{:,.2f}'.format(user.bonus_target) if user.bonus_target is not none else '' }}" placeholder="0.00">
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Bonus plan</label>
+              <input type="text" name="bonus_plan" class="form-control" value="{{ user.bonus_plan or '' }}" placeholder="Quarterly accelerator, renewals, etc.">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Notes</label>
+              <textarea name="compensation_notes" rows="3" class="form-control" placeholder="Eligibility, draw recoverables, commission overrides…">{{ user.compensation_notes or '' }}</textarea>
+              <div class="form-text small">Visible to HR, admins, and payroll processors.</div>
+            </div>
+          </div>
+        </div>
+        <div class="card-footer bg-light d-flex justify-content-between align-items-center">
+          <span class="text-muted small">{{ user.compensation_summary }}</span>
+          <button type="submit" class="btn btn-primary">Save compensation</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
 <div class="row g-4">
   <div class="col-xl-4">

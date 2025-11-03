@@ -147,6 +147,31 @@
     </div>
   </section>
 
+  <section class="py-6 landing-section landing-section--muted">
+    <div class="container">
+      <div class="row justify-content-between align-items-center mb-5 g-4">
+        <div class="col-lg-6">
+          <span class="badge rounded-pill bg-warning-soft text-warning fw-semibold">Guides &amp; templates</span>
+          <h2 class="display-6 fw-bold mt-3">Launch faster with curated onboarding resources.</h2>
+          <p class="text-muted lead">Download the Excel signup sheet, revisit the interactive guide, and share messaging best practices so every teammate starts strong.</p>
+        </div>
+      </div>
+      <div class="row g-4">
+        {% for resource in resource_links %}
+        <div class="col-md-4">
+          <a class="card h-100 shadow-sm text-decoration-none" href="{{ resource.href }}" target="{{ '_blank' if resource.href.startswith('http') and 'trackyoursheets' not in resource.href else '_self' }}">
+            <div class="card-body">
+              <div class="icon-badge mb-3"><i class="bi {{ resource.icon }}"></i></div>
+              <h3 class="h5 text-primary">{{ resource.title }}</h3>
+              <p class="text-muted small mb-0">{{ resource.description }}</p>
+            </div>
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
   <section id="personas" class="py-6 landing-section landing-section--muted">
     <div class="container">
       <div class="row justify-content-between align-items-center mb-5 g-4">

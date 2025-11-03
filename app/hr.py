@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import List, Sequence
 
 from flask import (
@@ -36,6 +37,18 @@ from .models import (
     Workspace,
     WorkspaceMembership,
 )
+
+
+def _decimal_or_none(value: str | None) -> Decimal | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        return Decimal(stripped)
+    except (InvalidOperation, ValueError):
+        return None
 
 
 ACCESS_ROLES = {"owner", "admin", "agent", "bookkeeper", "hr"}
@@ -735,35 +748,170 @@ def complaint_submitted(complaint_id: int):
 @hr_bp.route("/employees/<int:user_id>", methods=["GET", "POST"])
 def manage_employee(user_id: int):
     org = Organization.query.get_or_404(current_user.org_id)
-    user = User.query.filter_by(id=user_id, org_id=org.id).first_or_404()
+    user = (
+        User.query.options(
+            joinedload(User.workspace_memberships)
+            .joinedload(WorkspaceMembership.workspace)
+            .joinedload(Workspace.office),
+            joinedload(User.office_memberships).joinedload(OfficeMembership.office),
+            joinedload(User.producer),
+        )
+        .filter_by(id=user_id, org_id=org.id)
+        .first_or_404()
+    )
     if request.method == "POST":
-        user.first_name = request.form.get("first_name") or None
-        user.last_name = request.form.get("last_name") or None
-        user.preferred_name = request.form.get("preferred_name") or None
-        user.job_title = request.form.get("job_title") or None
-        user.phone_number = request.form.get("phone_number") or None
-        user.role = request.form.get("role") or user.role
-        user.status = request.form.get("status") or user.status
-        user.must_change_password = bool(request.form.get("must_change_password"))
-        emergency_name = request.form.get("emergency_name")
-        emergency_phone = request.form.get("emergency_phone")
-        emergency_relation = request.form.get("emergency_relation")
-        if emergency_name or emergency_phone or emergency_relation:
-            user.emergency_contact = {
-                "name": emergency_name,
-                "phone": emergency_phone,
-                "relationship": emergency_relation,
-            }
-        else:
-            user.emergency_contact = None
-        if user.producer:
-            producer_name = request.form.get("producer_display_name") or None
-            if producer_name:
-                user.producer.display_name = producer_name
-        db.session.add(user)
-        db.session.commit()
-        flash("Employee profile updated.", "success")
-        return redirect(url_for("hr.manage_employee", user_id=user.id))
+        intent = request.form.get("intent") or "profile"
+        redirect_target = redirect(url_for("hr.manage_employee", user_id=user.id))
+
+        if intent == "profile":
+            user.first_name = request.form.get("first_name") or None
+            user.last_name = request.form.get("last_name") or None
+            user.preferred_name = request.form.get("preferred_name") or None
+            user.job_title = request.form.get("job_title") or None
+            user.phone_number = request.form.get("phone_number") or None
+            user.role = request.form.get("role") or user.role
+            user.status = request.form.get("status") or user.status
+            user.must_change_password = bool(request.form.get("must_change_password"))
+            emergency_name = request.form.get("emergency_name")
+            emergency_phone = request.form.get("emergency_phone")
+            emergency_relation = request.form.get("emergency_relation")
+            if emergency_name or emergency_phone or emergency_relation:
+                user.emergency_contact = {
+                    "name": emergency_name,
+                    "phone": emergency_phone,
+                    "relationship": emergency_relation,
+                }
+            else:
+                user.emergency_contact = None
+            if user.producer:
+                producer_name = request.form.get("producer_display_name") or None
+                if producer_name:
+                    user.producer.display_name = producer_name
+            db.session.add(user)
+            db.session.commit()
+            flash("Employee profile updated.", "success")
+            return redirect_target
+
+        if intent == "compensation":
+            currency = request.form.get("compensation_currency") or user.compensation_currency
+            base_salary_raw = request.form.get("base_salary")
+            bonus_target_raw = request.form.get("bonus_target")
+            base_salary = _decimal_or_none(base_salary_raw)
+            bonus_target = _decimal_or_none(bonus_target_raw)
+            if base_salary_raw and base_salary is None:
+                flash("Enter a valid base salary amount (numbers only).", "danger")
+                return redirect_target
+            if bonus_target_raw and bonus_target is None:
+                flash("Enter a valid bonus target (numbers only).", "danger")
+                return redirect_target
+            user.update_compensation(
+                currency=currency,
+                base_salary=base_salary,
+                bonus_plan=request.form.get("bonus_plan") or None,
+                bonus_target=bonus_target,
+                notes=request.form.get("compensation_notes"),
+            )
+            db.session.add(user)
+            db.session.commit()
+            flash("Compensation profile updated.", "success")
+            return redirect_target
+
+        if intent == "add_workspace_membership":
+            workspace_id_raw = request.form.get("workspace_id")
+            try:
+                workspace_id = int(workspace_id_raw) if workspace_id_raw else None
+            except (TypeError, ValueError):
+                workspace_id = None
+            if not workspace_id:
+                flash("Select a workspace to assign.", "danger")
+                return redirect_target
+            workspace = Workspace.query.filter_by(id=workspace_id, org_id=org.id).first()
+            if not workspace:
+                flash("Workspace not found.", "danger")
+                return redirect_target
+            role_value = request.form.get("workspace_role") or None
+            user.record_workspace_membership(workspace, role=role_value)
+            db.session.commit()
+            flash(
+                f"Added to {workspace.name} with role {role_value or user.role}.",
+                "success",
+            )
+            return redirect_target
+
+        if intent == "remove_workspace_membership":
+            membership_id_raw = request.form.get("membership_id")
+            try:
+                membership_id = int(membership_id_raw) if membership_id_raw else None
+            except (TypeError, ValueError):
+                membership_id = None
+            if not membership_id:
+                flash("Select a workspace assignment to remove.", "danger")
+                return redirect_target
+            membership = WorkspaceMembership.query.filter_by(
+                id=membership_id,
+                org_id=org.id,
+                user_id=user.id,
+            ).first()
+            if not membership:
+                flash("Workspace assignment not found.", "warning")
+                return redirect_target
+            if (
+                user.producer
+                and user.producer.workspace_id == membership.workspace_id
+            ):
+                flash("Cannot remove a producer from their primary workspace.", "danger")
+                return redirect_target
+            if (
+                user.role == "agent"
+                and getattr(user, "managed_workspace", None)
+                and user.managed_workspace.id == membership.workspace_id
+            ):
+                flash("Agents must remain assigned to their managed workspace.", "danger")
+                return redirect_target
+            db.session.delete(membership)
+            db.session.commit()
+            flash("Workspace assignment removed.", "info")
+            return redirect_target
+
+        if intent == "add_office_membership":
+            office_id_raw = request.form.get("office_id")
+            try:
+                office_id = int(office_id_raw) if office_id_raw else None
+            except (TypeError, ValueError):
+                office_id = None
+            if not office_id:
+                flash("Select an office to assign.", "danger")
+                return redirect_target
+            office = Office.query.filter_by(id=office_id, org_id=org.id).first()
+            if not office:
+                flash("Office not found.", "danger")
+                return redirect_target
+            user.record_office_membership(office)
+            db.session.commit()
+            flash(f"Added to {office.name} office.", "success")
+            return redirect_target
+
+        if intent == "remove_office_membership":
+            membership_id_raw = request.form.get("membership_id")
+            try:
+                membership_id = int(membership_id_raw) if membership_id_raw else None
+            except (TypeError, ValueError):
+                membership_id = None
+            if not membership_id:
+                flash("Select an office assignment to remove.", "danger")
+                return redirect_target
+            membership = OfficeMembership.query.filter_by(
+                id=membership_id,
+                org_id=org.id,
+                user_id=user.id,
+            ).first()
+            if not membership:
+                flash("Office assignment not found.", "warning")
+                return redirect_target
+            db.session.delete(membership)
+            db.session.commit()
+            flash("Office assignment removed.", "info")
+            return redirect_target
 
     acknowledgements = (
         HRDocumentAcknowledgement.query.filter_by(org_id=org.id, user_id=user.id)
@@ -795,6 +943,17 @@ def manage_employee(user_id: int):
         .all()
     )
 
+    all_workspaces = (
+        Workspace.query.filter_by(org_id=org.id)
+        .order_by(Workspace.name.asc())
+        .all()
+    )
+    all_offices = (
+        Office.query.filter_by(org_id=org.id)
+        .order_by(Office.name.asc())
+        .all()
+    )
+
     return render_template(
         "hr/edit_user.html",
         org=org,
@@ -803,5 +962,7 @@ def manage_employee(user_id: int):
         reported_complaints=reported_complaints,
         assigned_complaints=assigned_complaints,
         payroll_history=payroll_history,
+        all_workspaces=all_workspaces,
+        all_offices=all_offices,
         active_tab="directory",
     )

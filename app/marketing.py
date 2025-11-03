@@ -290,4 +290,12 @@ def marketing_top_questions() -> list[dict[str, str]]:
             "question": "Do you support multi-entity agencies?",
             "answer": "Workspaces, role-based permissions, and consolidated reporting make it easy to manage multiple offices or brands while preserving autonomy and data privacy.",
         },
+        {
+            "question": "Can teammates collaborate across multiple offices and workspaces?",
+            "answer": "Yes. Assign any user to as many offices and workspaces as they need. TrackYourSheets records their role per location so permissions, chat visibility, and payroll access stay accurate.",
+        },
+        {
+            "question": "How do payroll and compensation exports work?",
+            "answer": "Capture base salaries, bonuses, and draws for every teammate—not just producers. Payroll runs consolidate manual and automated commissions with exportable CSVs for finance systems.",
+        },
     ]
