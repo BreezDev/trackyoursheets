@@ -102,8 +102,10 @@ def create_app(test_config=None):
         db.create_all()
         _ensure_schema_extensions()
         _ensure_default_plans()
-        _ensure_master_admin()
+        print("⚠️ its on")
+        _ensure_master_admin()  # temporarily disabled
         _seed_default_categories()
+
     from .auth import auth_bp
     from .main import main_bp
     from .admin import admin_bp
