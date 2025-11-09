@@ -1,0 +1,189 @@
+{% extends 'base.html' %}
+{% block title %}Master Dashboard · TrackYourSheets{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-1">Master admin overview</h1>
+    <p class="text-muted mb-0">Monitor every organisation, teammate, and subscription across TrackYourSheets in one place.</p>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('main.export_master_user_report') }}">Export all users (CSV)</a>
+  </div>
+</div>
+
+{% set total_orgs = org_summaries|length %}
+{% set total_users = user_rows|length %}
+{% set role_labels = {
+  'owner': 'Owners',
+  'admin': 'Admins',
+  'agent': 'Agents',
+  'hr': 'HR',
+  'producer': 'Producers',
+  'bookkeeper': 'Bookkeepers',
+  'read_only': 'Read-only'
+} %}
+
+<div class="row g-4">
+  <div class="col-xl-4 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <span class="badge bg-primary-soft text-primary">Organisations</span>
+        <h2 class="display-6 fw-semibold mt-2">{{ total_orgs }}</h2>
+        <p class="text-muted mb-0">Total accounts currently active in the platform.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4 col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <span class="badge bg-success-soft text-success">Users</span>
+        <h2 class="display-6 fw-semibold mt-2">{{ total_users }}</h2>
+        <p class="text-muted mb-0">All teammates across every workspace.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4 col-12">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <span class="badge bg-info-soft text-info">Role mix</span>
+        <ul class="list-unstyled mb-0 mt-2 small text-muted">
+          {% for key, label in role_labels.items() %}
+          <li class="d-flex justify-content-between align-items-center">
+            <span>{{ label }}</span>
+            <span class="fw-semibold">{{ role_totals.get(key, 0) }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="mt-5">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="h5 mb-0">Organisations</h2>
+    <span class="text-muted small">Plan assignments and active headcount</span>
+  </div>
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Organisation</th>
+            <th scope="col">Plan</th>
+            <th scope="col" class="text-end">Users</th>
+            <th scope="col" class="text-end">Owners</th>
+            <th scope="col" class="text-end">Admins</th>
+            <th scope="col" class="text-end">HR</th>
+            <th scope="col" class="text-end">Agents</th>
+            <th scope="col" class="text-end">Producers</th>
+            <th scope="col">Subscription</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in org_summaries %}
+          <tr>
+            <td class="fw-semibold">{{ row.name }}</td>
+            <td>{{ row.plan_name }}</td>
+            <td class="text-end">{{ row.user_total }}</td>
+            <td class="text-end">{{ row.role_breakdown.get('owner', 0) }}</td>
+            <td class="text-end">{{ row.role_breakdown.get('admin', 0) }}</td>
+            <td class="text-end">{{ row.role_breakdown.get('hr', 0) }}</td>
+            <td class="text-end">{{ row.role_breakdown.get('agent', 0) }}</td>
+            <td class="text-end">{{ row.role_breakdown.get('producer', 0) }}</td>
+            <td>
+              {% if row.subscription %}
+              <span class="badge bg-primary-soft text-primary">{{ row.subscription.status or 'unknown' }}</span>
+              <div class="text-muted small">{{ row.subscription.plan or '—' }}</div>
+              {% else %}
+              <span class="text-muted small">No subscription</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="9" class="text-center text-muted py-4">No organisations found.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="mt-5">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="h5 mb-0">Recent subscriptions</h2>
+    <span class="text-muted small">Includes trials, active plans, and cancellations</span>
+  </div>
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Organisation</th>
+            <th scope="col">Plan</th>
+            <th scope="col">Status</th>
+            <th scope="col">Created</th>
+            <th scope="col">Trial end</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for subscription in subscriptions %}
+          <tr>
+            <td>{{ subscription.organization.name if subscription.organization else '—' }}</td>
+            <td>{{ subscription.plan or '—' }}</td>
+            <td><span class="badge bg-secondary-soft text-secondary">{{ subscription.status or 'unknown' }}</span></td>
+            <td>{{ subscription.created_at.strftime('%b %d, %Y') if subscription.created_at }}</td>
+            <td>{{ subscription.trial_end.strftime('%b %d, %Y') if subscription.trial_end }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-center text-muted py-4">No subscriptions recorded yet.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="mt-5">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="h5 mb-0">All teammates</h2>
+    <span class="text-muted small">Sorted by most recent signup</span>
+  </div>
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Email</th>
+            <th scope="col">Role</th>
+            <th scope="col">Status</th>
+            <th scope="col">Organisation</th>
+            <th scope="col">Joined</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in user_rows %}
+          <tr>
+            <td>{{ user.full_name or user.display_name_for_ui }}</td>
+            <td>{{ user.email }}</td>
+            <td><span class="badge bg-secondary">{{ user.role }}</span></td>
+            <td>{{ user.status }}</td>
+            <td>{{ user.organization.name if user.organization else '—' }}</td>
+            <td>{{ user.created_at.strftime('%b %d, %Y %I:%M %p') if user.created_at }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="text-center text-muted py-4">No users found.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}

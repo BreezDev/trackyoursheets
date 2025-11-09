@@ -3,10 +3,21 @@ from collections import defaultdict
 from datetime import datetime
 from io import BytesIO, StringIO
 
-from flask import Blueprint, abort, jsonify, render_template, request, send_file, url_for
+from flask import (
+    Blueprint,
+    abort,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
 from flask_login import current_user, login_required
 from sqlalchemy import func, or_
 
+from . import db
 from .models import (
     CommissionTransaction,
     ImportBatch,
@@ -15,7 +26,7 @@ from .models import (
     Workspace,
     CategoryTag,
 )
-from .workspaces import get_accessible_workspace_ids
+from .workspaces import get_accessible_producers, get_accessible_workspace_ids
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -109,6 +120,11 @@ def overview():
         statements = []
         batches = []
 
+    can_assign_producers = current_user.role in {"owner", "admin"}
+    assignable_producers = (
+        get_accessible_producers(current_user) if can_assign_producers else []
+    )
+
     return render_template(
         "reports/overview.html",
         carrier_totals=carrier_rows,
@@ -118,6 +134,8 @@ def overview():
         statements=statements,
         batches=batches,
         generated_at=datetime.utcnow(),
+        assignable_producers=assignable_producers,
+        can_assign_producers=can_assign_producers,
     )
 
 
@@ -461,6 +479,34 @@ def activity_detail(txn_id: int):
         abort(403)
 
     return render_template("reports/activity_detail.html", transaction=txn)
+
+
+@reports_bp.route("/activity/<int:txn_id>/assign", methods=["POST"])
+@login_required
+def assign_transaction_producer(txn_id: int):
+    if current_user.role not in {"owner", "admin"}:
+        abort(403)
+    txn = CommissionTransaction.query.filter_by(
+        id=txn_id, org_id=current_user.org_id
+    ).first_or_404()
+    producer_id = request.form.get("producer_id", type=int)
+    next_url = request.form.get("next") or request.referrer or url_for("reports.overview")
+    if not producer_id:
+        flash("Select a producer to assign.", "danger")
+        return redirect(next_url)
+    producer = Producer.query.filter_by(
+        id=producer_id, org_id=current_user.org_id
+    ).first()
+    if not producer:
+        flash("Producer not found.", "danger")
+        return redirect(next_url)
+    txn.producer_id = producer.id
+    if not txn.workspace_id and producer.workspace_id:
+        txn.workspace_id = producer.workspace_id
+    db.session.add(txn)
+    db.session.commit()
+    flash("Producer assigned to transaction.", "success")
+    return redirect(next_url)
 
 
 def _build_analytics_dataset(params, include_rows=False):

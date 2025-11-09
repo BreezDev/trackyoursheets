@@ -53,6 +53,74 @@
   </div>
 </section>
 
+<section class="mt-4">
+  <div class="row g-4">
+    <div class="col-xl-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+          <h2 class="h6 mb-0">Recent manual entries</h2>
+          <span class="badge bg-secondary-soft text-secondary">Last 5</span>
+        </div>
+        {% if manual_entries %}
+        <ul class="list-group list-group-flush">
+          {% for entry in manual_entries %}
+          <li class="list-group-item d-flex justify-content-between align-items-start gap-3">
+            <div>
+              <div class="fw-semibold">{{ entry.producer.display_name if entry.producer else 'Unassigned' }}</div>
+              <div class="text-muted small">
+                {{ entry.workspace.name if entry.workspace else '—' }} ·
+                {{ entry.txn_date.strftime('%b %d, %Y') if entry.txn_date else 'No date' }}
+              </div>
+              <div class="text-muted small"><a class="link-secondary" href="{{ url_for('reports.activity_detail', txn_id=entry.id) }}">View details</a></div>
+              {% if entry.notes %}
+              <div class="text-muted small">{{ entry.notes }}</div>
+              {% endif %}
+            </div>
+            <div class="text-end">
+              <div class="fw-semibold">${{ '%.2f'|format(entry.amount or entry.manual_amount or entry.commission or 0) }}</div>
+              <div class="text-muted small">Premium ${{ '%.2f'|format(entry.premium or 0) }}</div>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="card-body">
+          <p class="text-muted mb-0">Manual sales will appear here as soon as your team records them.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-xl-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+          <h2 class="h6 mb-0">Top producers</h2>
+          <span class="badge bg-success-soft text-success">Commission</span>
+        </div>
+        {% if top_producers %}
+        <ul class="list-group list-group-flush">
+          {% for producer in top_producers %}
+          <li class="list-group-item d-flex justify-content-between align-items-start gap-3">
+            <div>
+              <div class="fw-semibold">{{ producer.name }}</div>
+              <div class="text-muted small">{{ producer.workspace }}</div>
+            </div>
+            <div class="text-end">
+              <div class="fw-semibold">${{ '%.2f'|format(producer.commission) }}</div>
+              <div class="text-muted small">Premium ${{ '%.2f'|format(producer.premium) }}</div>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="card-body">
+          <p class="text-muted mb-0">Assign producers to transactions to see leaderboards populate.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="mt-5">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>

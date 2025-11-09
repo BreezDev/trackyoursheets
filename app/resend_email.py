@@ -7,6 +7,8 @@ load_dotenv()
 
 import os
 import html
+import threading
+import time
 from typing import Iterable, Mapping, MutableMapping, Optional, Sequence, Union
 
 import requests
@@ -15,6 +17,22 @@ import resend
 from flask import current_app
 
 EmailRecipient = Union[str, Mapping[str, str]]
+
+_SEND_THROTTLE_SECONDS = 10.0
+_send_lock = threading.Lock()
+_last_send_ts: float = 0.0
+
+
+def _throttle_email_sends() -> None:
+    """Ensure we respect downstream rate limits when sending emails."""
+
+    global _last_send_ts
+    with _send_lock:
+        now = time.monotonic()
+        wait_for = _SEND_THROTTLE_SECONDS - (now - _last_send_ts)
+        if wait_for > 0:
+            time.sleep(wait_for)
+        _last_send_ts = time.monotonic()
 
 
 def _split_emails(value: Optional[str]) -> list[str]:
@@ -281,6 +299,8 @@ def _send_email(
 
     if send_at:
         params["scheduled_at"] = send_at
+
+    _throttle_email_sends()
 
     try:
         resend.Emails.send(params)  # type: ignore[arg-type]

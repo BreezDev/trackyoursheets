@@ -6,13 +6,14 @@
   }
 
   const labels = {
+    all: 'All time',
     today: 'Today',
     week: 'This week',
     month: 'This month',
     quarter: 'This quarter',
     year: 'Year to date',
   };
-  const rangeOrder = ['today', 'week', 'month', 'quarter', 'year'];
+  const rangeOrder = ['all', 'today', 'week', 'month', 'quarter', 'year'];
   const currency = chartCanvas.dataset.premiumCurrency || 'USD';
   const formatter = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -20,12 +21,29 @@
     maximumFractionDigits: 2,
   });
 
+  const getValue = (key) => {
+    const raw = totals[key];
+    const parsed = Number.parseFloat(raw ?? 0);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
   function buildData(activeRange) {
-    return rangeOrder.map((key) => ({
-      label: labels[key],
-      value: Number.parseFloat(totals[key] || 0),
-      isActive: activeRange === 'all' || activeRange === key,
-    }));
+    if (activeRange === 'all') {
+      return rangeOrder.map((key) => ({
+        key,
+        label: labels[key],
+        value: getValue(key),
+        isActive: key === 'all',
+      }));
+    }
+    return [
+      {
+        key: activeRange,
+        label: labels[activeRange],
+        value: getValue(activeRange),
+        isActive: true,
+      },
+    ];
   }
 
   const context = chartCanvas.getContext('2d');
@@ -79,12 +97,9 @@
     if (!summaryEl) {
       return;
     }
-    if (range === 'all') {
-      summaryEl.textContent = 'Comparing today, week, month, quarter, and year totals.';
-      return;
-    }
-    const value = Number.parseFloat(totals[range] || 0);
-    summaryEl.textContent = `${labels[range]} · ${formatter.format(value)} collected`;
+    const value = getValue(range);
+    const label = labels[range] || 'Total';
+    summaryEl.textContent = `${label} · ${formatter.format(value)} collected`;
   }
 
   function applyFilter(range) {

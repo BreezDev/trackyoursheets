@@ -74,7 +74,22 @@
             {% for txn in recent_transactions %}
             <tr>
               <td>{{ txn.txn_date.strftime('%b %d, %Y') if txn.txn_date }}</td>
-              <td>{{ txn.producer.display_name if txn.producer else 'Unassigned' }}</td>
+              <td>
+                {% if not txn.producer and can_assign_producers and assignable_producers %}
+                <form class="d-flex gap-2 align-items-center" method="post" action="{{ url_for('reports.assign_transaction_producer', txn_id=txn.id) }}">
+                  <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <select name="producer_id" class="form-select form-select-sm" aria-label="Assign producer">
+                    <option value="">Select producer</option>
+                    {% for producer in assignable_producers %}
+                    <option value="{{ producer.id }}">{{ producer.display_name }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="btn btn-sm btn-outline-primary" type="submit">Assign</button>
+                </form>
+                {% else %}
+                {{ txn.producer.display_name if txn.producer else 'Unassigned' }}
+                {% endif %}
+              </td>
               <td>{{ txn.carrier_name or (txn.policy.carrier.name if txn.policy and txn.policy.carrier else '—') }}</td>
               <td>{{ txn.category or 'raw' }}</td>
               <td class="text-end">${{ '%.2f'|format(txn.premium or 0) }}</td>

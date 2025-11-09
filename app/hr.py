@@ -6,7 +6,9 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
 from typing import List, Sequence
+import textwrap
 
 from flask import (
     Blueprint,
@@ -15,6 +17,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     url_for,
 )
 from flask_login import current_user, login_required
@@ -37,6 +40,10 @@ from .models import (
     Workspace,
     WorkspaceMembership,
 )
+
+from docx import Document
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
 
 def _decimal_or_none(value: str | None) -> Decimal | None:
@@ -89,9 +96,10 @@ hr_bp = Blueprint("hr", __name__)
 class ResourceLink:
     """Static HR resource metadata for templating."""
 
+    slug: str
     title: str
     description: str
-    href: str
+    body: tuple[str, ...] = ()
     icon: str = "file-earmark-text"
 
 
@@ -101,15 +109,25 @@ POLICY_SECTIONS: Sequence[dict[str, object]] = (
         "description": "Core policies covering conduct, payroll, time off, and compliance expectations.",
         "resources": [
             ResourceLink(
+                slug="employee-handbook-template",
                 title="TrackYourSheets handbook",
                 description="Download the master handbook template — update it with your agency specifics before sharing.",
-                href="https://example.com/hr/handbook.pdf",
+                body=(
+                    "Welcome teammates with a clear overview of your agency's mission, values, and service commitments.",
+                    "Section two outlines expectations for payroll cycles, overtime eligibility, and how manual draws are reconciled in TrackYourSheets.",
+                    "Use the closing section to highlight benefits, compliance contacts, and how to submit acknowledgement receipts.",
+                ),
                 icon="journal-text",
             ),
             ResourceLink(
+                slug="code-of-conduct-checklist",
                 title="Code of conduct checklist",
                 description="Quick checklist to confirm new hires acknowledged behaviour, confidentiality, and data policies.",
-                href="https://example.com/hr/conduct-checklist",
+                body=(
+                    "Use this checklist during onboarding meetings to confirm each teammate understands confidentiality, data handling, and customer communication standards.",
+                    "Capture signatures directly in TrackYourSheets or upload scans so every acknowledgement stays audit-ready.",
+                    "Revisit the checklist during quarterly reviews to reinforce expectations and update with any new regulatory requirements.",
+                ),
                 icon="check2-square",
             ),
         ],
@@ -119,15 +137,25 @@ POLICY_SECTIONS: Sequence[dict[str, object]] = (
         "description": "Summaries and enrolment guidance for medical, retirement, and wellness programmes.",
         "resources": [
             ResourceLink(
+                slug="benefits-overview-deck",
                 title="Benefits overview deck",
                 description="Slides that outline plan tiers, employer contributions, and enrolment deadlines for your teams.",
-                href="https://example.com/hr/benefits",
+                body=(
+                    "Start the presentation with a snapshot of medical, dental, vision, and ancillary benefits along with employer contributions.",
+                    "Slide two recommends how employees should submit elections inside TrackYourSheets and which documents HR requires for dependents.",
+                    "Close with a calendar of open enrolment dates and who to contact for help choosing plans.",
+                ),
                 icon="heart",
             ),
             ResourceLink(
+                slug="pto-request-template",
                 title="PTO request template",
                 description="Shareable template that routes PTO approvals through TrackYourSheets with automated notifications.",
-                href="https://example.com/hr/pto-template",
+                body=(
+                    "Employees can copy this template when requesting personal time or vacation so approvals stay consistent across offices.",
+                    "Managers review the request, confirm coverage in the workspace calendar, and respond directly in TrackYourSheets chat.",
+                    "HR receives an automatic notification once the manager approves, keeping payroll calendars accurate without extra emails.",
+                ),
                 icon="calendar2-check",
             ),
         ],
@@ -137,20 +165,80 @@ POLICY_SECTIONS: Sequence[dict[str, object]] = (
         "description": "Keep licenses current and ensure security, privacy, and harassment training stays on schedule.",
         "resources": [
             ResourceLink(
+                slug="compliance-tracker",
                 title="Annual compliance tracker",
                 description="Spreadsheet for tracking CE credits, license expirations, and required annual attestations.",
-                href="https://example.com/hr/compliance-tracker",
+                body=(
+                    "Track renewal deadlines, continuing education credits, and carrier-specific certifications in one shared view.",
+                    "Assign owners to each requirement and capture completion notes so auditors see the full history instantly.",
+                    "Filter the tracker by state or license class before month-end so no credentials lapse unexpectedly.",
+                ),
                 icon="shield-check",
             ),
             ResourceLink(
+                slug="security-awareness-agenda",
                 title="Security awareness agenda",
                 description="30-minute meeting agenda covering phishing drills, password hygiene, and device requirements.",
-                href="https://example.com/hr/security-agenda",
+                body=(
+                    "Kick off the session with recent phishing examples and highlight how to escalate suspicious emails in TrackYourSheets.",
+                    "Review password and MFA policies for every system, including recommended rotation cadences.",
+                    "Close with device hardening tips, remote work expectations, and follow-up assignments for each attendee.",
+                ),
                 icon="shield-lock",
             ),
         ],
     },
 )
+
+POLICY_RESOURCE_LOOKUP = {
+    resource.slug: resource
+    for section in POLICY_SECTIONS
+    for resource in section["resources"]
+}
+
+
+def _resource_paragraphs(resource: ResourceLink) -> tuple[str, ...]:
+    if resource.body:
+        return resource.body
+    if resource.description:
+        return (resource.description,)
+    return ()
+
+
+def _build_resource_docx(resource: ResourceLink) -> BytesIO:
+    document = Document()
+    document.add_heading(resource.title, level=1)
+    for paragraph in _resource_paragraphs(resource):
+        document.add_paragraph(paragraph)
+    buffer = BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _build_resource_pdf(resource: ResourceLink) -> BytesIO:
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    y_position = height - 72
+    pdf.setTitle(resource.title)
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.drawString(72, y_position, resource.title)
+    y_position -= 24
+    pdf.setFont("Helvetica", 11)
+    for paragraph in _resource_paragraphs(resource):
+        wrapped = textwrap.wrap(paragraph, 80) or [""]
+        for line in wrapped:
+            if y_position <= 72:
+                pdf.showPage()
+                pdf.setFont("Helvetica", 11)
+                y_position = height - 72
+            pdf.drawString(72, y_position, line)
+            y_position -= 14
+        y_position -= 10
+    pdf.save()
+    buffer.seek(0)
+    return buffer
 
 
 ONBOARDING_TASKS: Sequence[dict[str, str]] = (
@@ -514,6 +602,44 @@ def policies():
     )
 
 
+@hr_bp.route("/policies/resources/<slug>")
+@login_required
+def policy_resource(slug: str):
+    resource = POLICY_RESOURCE_LOOKUP.get(slug)
+    if not resource:
+        abort(404)
+    return render_template(
+        "hr/policy_resource.html",
+        resource=resource,
+        active_tab="policies",
+    )
+
+
+@hr_bp.route("/policies/resources/<slug>/export")
+@login_required
+def export_policy_resource(slug: str):
+    resource = POLICY_RESOURCE_LOOKUP.get(slug)
+    if not resource:
+        abort(404)
+    fmt = (request.args.get("format") or "docx").lower()
+    filename = f"{slug}.{fmt if fmt in {'pdf', 'docx'} else 'docx'}"
+    if fmt == "pdf":
+        buffer = _build_resource_pdf(resource)
+        return send_file(
+            buffer,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=filename,
+        )
+    buffer = _build_resource_docx(resource)
+    return send_file(
+        buffer,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
 @hr_bp.route("/documents")
 def documents():
     org = Organization.query.get_or_404(current_user.org_id)
@@ -547,6 +673,19 @@ def documents():
         active_tab="documents",
         active_total=active_total,
         category_options=DOCUMENT_CATEGORY_LABELS,
+    )
+
+
+@hr_bp.route("/documents/<int:doc_id>/view")
+@login_required
+def view_document(doc_id: int):
+    org = Organization.query.get_or_404(current_user.org_id)
+    document = HRDocument.query.filter_by(id=doc_id, org_id=org.id).first_or_404()
+    return render_template(
+        "hr/document_view.html",
+        org=org,
+        document=document,
+        active_tab="documents",
     )
 
 
