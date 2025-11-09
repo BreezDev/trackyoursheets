@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}{{ document.title }} · HR Document{% endblock %}
+{% block content %}
+<div class="mb-4 d-flex justify-content-between align-items-center">
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('hr.documents') }}">&larr; Back to documents</a>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('hr.edit_document', doc_id=document.id) }}">Edit document</a>
+    {% if document.requires_acknowledgement %}
+    <span class="badge bg-success-soft text-success">Acknowledgement required</span>
+    {% endif %}
+  </div>
+</div>
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h1 class="h4">{{ document.title }}</h1>
+    {% if document.summary %}
+    <p class="text-muted">{{ document.summary }}</p>
+    {% endif %}
+    {% if document.content %}
+    <div class="mt-3">
+      {{ document.content | safe }}
+    </div>
+    {% elif document.link_url %}
+    <div class="alert alert-info" role="alert">
+      The document is hosted externally. We have attempted to embed it below; if it does not load, <a class="alert-link" href="{{ document.link_url }}" target="_blank" rel="noopener">open it in a new tab</a>.
+    </div>
+    <div class="ratio ratio-16x9">
+      <iframe src="{{ document.link_url }}" title="{{ document.title }}" loading="lazy" allowfullscreen></iframe>
+    </div>
+    {% else %}
+    <p class="text-muted">No content has been provided for this document yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

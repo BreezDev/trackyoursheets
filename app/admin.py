@@ -67,10 +67,14 @@ NOTIFICATION_LABELS = {
 
 
 def require_admin():
-    if current_user.role not in {"owner", "admin", "agent"}:
-        flash("You do not have access to the admin panel.", "danger")
-        return False
-    return True
+    if current_user.role in {"owner", "admin", "agent"}:
+        return True
+    if current_user.role == "hr":
+        endpoint = request.endpoint or ""
+        if endpoint in {"admin.payroll_dashboard"}:
+            return True
+    flash("You do not have access to the admin panel.", "danger")
+    return False
 
 
 @admin_bp.before_request
@@ -1261,7 +1265,11 @@ def payroll_dashboard():
     )
 
     stripe_gateway = current_app.extensions.get("stripe_gateway")
-    stripe_ready = bool(stripe_gateway and stripe_gateway.is_configured)
+    stripe_ready = bool(
+        stripe_gateway
+        and getattr(stripe_gateway, "can_process_payouts", False)
+        and stripe_gateway.can_process_payouts
+    )
 
     if request.method == "POST":
         if not payroll_rows:

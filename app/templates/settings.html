@@ -204,6 +204,40 @@
   </div>
 
   <div class="col-xl-8">
+    {% if current_user.role == 'producer' %}
+    <div class="card shadow-sm">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Your compensation snapshot</h2>
+        <span class="badge bg-primary-soft text-primary">Producer</span>
+      </div>
+      <div class="card-body">
+        {% if producer_payroll_preview %}
+        {% set preview = producer_payroll_preview %}
+        <div class="row g-4">
+          <div class="col-md-4">
+            <span class="text-muted small text-uppercase">Base salary</span>
+            {% if preview.base_salary %}
+            <div class="h4 mb-0">{{ preview.currency }} ${{ '%.2f'|format(preview.base_salary) }}</div>
+            {% else %}
+            <div class="h5 text-muted mb-0">Not recorded</div>
+            {% endif %}
+          </div>
+          <div class="col-md-4">
+            <span class="text-muted small text-uppercase">Lifetime commission</span>
+            <div class="h4 mb-0">{{ preview.currency }} ${{ '%.2f'|format(preview.lifetime_commission) }}</div>
+          </div>
+          <div class="col-md-4">
+            <span class="text-muted small text-uppercase">Last 90 days</span>
+            <div class="h4 mb-0">{{ preview.currency }} ${{ '%.2f'|format(preview.recent_commission) }}</div>
+            <div class="text-muted small">≈ {{ preview.currency }} ${{ '%.2f'|format(preview.monthly_average) }} / month</div>
+          </div>
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">We have not recorded any commission statements for you yet. Once imports or manual sales are assigned to you, this summary will populate automatically.</p>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
     <div class="card shadow-sm">
       <div class="card-header bg-light d-flex flex-column flex-md-row justify-content-md-between align-items-md-center gap-3">
         <div>
@@ -321,6 +355,7 @@
         {% endif %}
       </div>
     </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

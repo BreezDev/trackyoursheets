@@ -146,6 +146,16 @@ def create_app(test_config=None):
                 )
             if not active_workspace and workspace_options:
                 active_workspace = workspace_options[0]
+        master_email = app.config.get("MASTER_ADMIN_EMAIL") or os.environ.get(
+            "MASTER_ADMIN_EMAIL"
+        )
+        is_master_admin = (
+            current_user.is_authenticated
+            and master_email
+            and current_user.email
+            and current_user.email.strip().lower()
+            == master_email.strip().lower()
+        )
         return {
             "available_plans": plans,
             "current_year": datetime.utcnow().year,
@@ -154,6 +164,7 @@ def create_app(test_config=None):
                 "active": active_workspace,
             },
             "support_email": "contact@trackyoursheets.com",
+            "is_master_admin": is_master_admin,
         }
 
     @app.cli.command("init-db")

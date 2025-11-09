@@ -48,7 +48,7 @@
               {% if row.producer_id %}
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.producer_sales', producer_id=row.producer_id) }}">View sales</a>
               {% else %}
-              <span class="badge bg-secondary">Unassigned</span>
+              <a class="btn btn-sm btn-outline-secondary disabled" tabindex="-1" aria-disabled="true">View sales</a>
               {% endif %}
             </td>
           </tr>

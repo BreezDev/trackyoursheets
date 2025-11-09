@@ -39,6 +39,12 @@ class StripeGateway:
     def is_configured(self) -> bool:
         return bool(self.secret_key and self.price_ids)
 
+    @property
+    def can_process_payouts(self) -> bool:
+        """True when direct payouts can be submitted to Stripe."""
+
+        return bool(self.secret_key)
+
     def _resolve_price(self, plan: SubscriptionPlan | str) -> Optional[str]:
         key = plan.name if isinstance(plan, SubscriptionPlan) else str(plan)
         return self.price_ids.get(key.lower())

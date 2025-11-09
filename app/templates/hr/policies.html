@@ -23,7 +23,7 @@
         <p class="text-muted small">{{ section.description }}</p>
         <div class="list-group list-group-flush flex-grow-1">
           {% for resource in section.resources %}
-          <a class="list-group-item list-group-item-action d-flex align-items-start gap-3" href="{{ resource.href }}" target="_blank" rel="noopener">
+          <a class="list-group-item list-group-item-action d-flex align-items-start gap-3" href="{{ url_for('hr.policy_resource', slug=resource.slug) }}">
             <div class="rounded-circle bg-primary-soft text-primary d-flex align-items-center justify-content-center" style="width: 2.5rem; height: 2.5rem;">
               <i class="bi bi-{{ resource.icon }}"></i>
             </div>
@@ -59,9 +59,7 @@
             <div class="text-muted small mb-1">{{ document.summary }}</div>
             {% endif %}
             <div class="d-flex flex-wrap gap-2 small">
-              {% if document.link_url %}
-              <a class="btn btn-sm btn-outline-primary" href="{{ document.link_url }}" target="_blank" rel="noopener">Open link</a>
-              {% endif %}
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('hr.view_document', doc_id=document.id) }}">Open</a>
               <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('hr.edit_document', doc_id=document.id) }}">Manage</a>
               {% if document.requires_acknowledgement %}
               <span class="badge bg-success-soft text-success">Ack required</span>

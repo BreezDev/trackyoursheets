@@ -1,11 +1,16 @@
 from dotenv import load_dotenv
 load_dotenv()
+import csv
+import os
 import re
+from collections import Counter
 from datetime import date, datetime, timedelta
+from io import StringIO
 from typing import Sequence
 
 from flask import (
     Blueprint,
+    Response,
     current_app,
     render_template,
     request,
@@ -71,6 +76,20 @@ main_bp = Blueprint("main", __name__)
 
 
 MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_.+-]+)")
+
+
+def _master_admin_email() -> str | None:
+    return (
+        current_app.config.get("MASTER_ADMIN_EMAIL")
+        or os.environ.get("MASTER_ADMIN_EMAIL")
+    )
+
+
+def _is_master_admin(user) -> bool:
+    email = _master_admin_email()
+    if not email or not user or not getattr(user, "email", None):
+        return False
+    return user.email.strip().lower() == email.strip().lower()
 
 
 def _display_user_name(user):
@@ -186,6 +205,7 @@ def _calculate_premium_totals(
         return float(total)
 
     return {
+        "all": _sum_since(None),
         "today": _sum_since(today),
         "week": _sum_since(start_of_week),
         "month": _sum_since(start_of_month),
@@ -362,9 +382,72 @@ def api_guide():
 @main_bp.route("/dashboard")
 @login_required
 def dashboard():
+    if _is_master_admin(current_user):
+        orgs = (
+            Organization.query.options(
+                joinedload(Organization.plan),
+                joinedload(Organization.users),
+                joinedload(Organization.subscriptions),
+            )
+            .order_by(Organization.created_at.desc())
+            .all()
+        )
+        user_rows = (
+            User.query.options(joinedload(User.organization))
+            .order_by(User.created_at.desc())
+            .all()
+        )
+        role_totals: Counter[str] = Counter()
+        org_summaries: list[dict] = []
+        for org in orgs:
+            breakdown = Counter(user.role for user in org.users)
+            role_totals.update(breakdown)
+            latest_subscription = None
+            if org.subscriptions:
+                latest_subscription = max(
+                    org.subscriptions,
+                    key=lambda sub: sub.created_at or datetime.min,
+                )
+            org_summaries.append(
+                {
+                    "id": org.id,
+                    "name": org.name,
+                    "plan_name": org.plan.name if org.plan else "—",
+                    "user_total": len(org.users),
+                    "role_breakdown": breakdown,
+                    "subscription": latest_subscription,
+                }
+            )
+
+        subscriptions = (
+            Subscription.query.options(joinedload(Subscription.organization))
+            .order_by(Subscription.created_at.desc())
+            .all()
+        )
+
+        return render_template(
+            "dashboard_master.html",
+            org_summaries=org_summaries,
+            role_totals=role_totals,
+            user_rows=user_rows,
+            subscriptions=subscriptions,
+        )
+
     org_id = current_user.org_id
     workspace_ids = get_accessible_workspace_ids(current_user)
     workspaces = get_accessible_workspaces(current_user)
+
+    def _apply_workspace_scope(query):
+        if workspace_ids:
+            return query.filter(
+                or_(
+                    CommissionTransaction.workspace_id.in_(workspace_ids),
+                    CommissionTransaction.batch.has(
+                        ImportBatch.workspace_id.in_(workspace_ids)
+                    ),
+                )
+            )
+        return query
 
     requested_workspace_id = request.args.get("workspace_id", type=int)
     stored_workspace_id = session.get("active_workspace_id")
@@ -394,17 +477,10 @@ def dashboard():
     else:
         imports = []
 
-    txn_query = CommissionTransaction.query.filter_by(org_id=org_id)
-    if workspace_ids:
-        txn_query = txn_query.filter(
-            or_(
-                CommissionTransaction.workspace_id.in_(workspace_ids),
-                CommissionTransaction.batch.has(ImportBatch.workspace_id.in_(workspace_ids)),
-            )
-        )
-        txns_total = txn_query.count()
-    else:
-        txns_total = 0
+    txn_query = _apply_workspace_scope(
+        CommissionTransaction.query.filter_by(org_id=org_id)
+    )
+    txns_total = txn_query.count()
     audit_query = AuditLog.query.filter_by(org_id=org_id)
     audit_total = audit_query.count()
     recent_audit_events = (
@@ -433,6 +509,70 @@ def dashboard():
         org_id,
         list(workspace_ids) if workspace_ids else None,
     )
+    manual_entries = (
+        _apply_workspace_scope(
+            CommissionTransaction.query.filter_by(
+                org_id=org_id, source="manual"
+            )
+        )
+        .options(
+            joinedload(CommissionTransaction.producer),
+            joinedload(CommissionTransaction.workspace),
+        )
+        .order_by(
+            CommissionTransaction.txn_date.desc(),
+            CommissionTransaction.id.desc(),
+        )
+        .limit(5)
+        .all()
+    )
+
+    top_producer_rows = (
+        _apply_workspace_scope(
+            CommissionTransaction.query.filter_by(org_id=org_id)
+        )
+        .join(
+            Producer,
+            CommissionTransaction.producer_id == Producer.id,
+            isouter=True,
+        )
+        .join(
+            Workspace,
+            Producer.workspace_id == Workspace.id,
+            isouter=True,
+        )
+        .with_entities(
+            CommissionTransaction.producer_id.label("producer_id"),
+            Producer.display_name.label("producer_name"),
+            Workspace.name.label("workspace_name"),
+            func.coalesce(func.sum(CommissionTransaction.amount), 0).label(
+                "commission_total"
+            ),
+            func.coalesce(func.sum(CommissionTransaction.premium), 0).label(
+                "premium_total"
+            ),
+        )
+        .group_by(
+            CommissionTransaction.producer_id,
+            Producer.display_name,
+            Workspace.name,
+        )
+        .order_by(func.coalesce(func.sum(CommissionTransaction.amount), 0).desc())
+        .limit(5)
+        .all()
+    )
+
+    top_producers: list[dict[str, object]] = []
+    for row in top_producer_rows:
+        top_producers.append(
+            {
+                "producer_id": row.producer_id,
+                "name": row.producer_name or "Unassigned",
+                "workspace": row.workspace_name or "—",
+                "commission": float(row.commission_total or 0),
+                "premium": float(row.premium_total or 0),
+            }
+        )
     if active_workspace:
         personal_note = (
             WorkspaceNote.query.filter_by(
@@ -482,9 +622,42 @@ def dashboard():
         chat_messages=chat_messages,
         chat_messages_payload=chat_payload,
         premium_totals=premium_totals,
+        manual_entries=manual_entries,
+        top_producers=top_producers,
         premium_currency=getattr(current_user, "compensation_currency", None)
         or "USD",
     )
+
+
+@main_bp.route("/dashboard/master/export")
+@login_required
+def export_master_user_report():
+    if not _is_master_admin(current_user):
+        abort(403)
+    users = (
+        User.query.options(joinedload(User.organization))
+        .order_by(User.org_id.asc(), User.email.asc())
+        .all()
+    )
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Organization", "Name", "Email", "Role", "Status"])
+    for user in users:
+        org_name = user.organization.name if user.organization else "Unknown"
+        writer.writerow(
+            [
+                org_name,
+                user.full_name or user.display_name_for_ui,
+                user.email,
+                user.role,
+                user.status,
+            ]
+        )
+    response = Response(output.getvalue(), mimetype="text/csv")
+    response.headers["Content-Disposition"] = (
+        "attachment; filename=trackyoursheets-users.csv"
+    )
+    return response
 
 
 @main_bp.route("/workspaces/switch", methods=["POST"])
@@ -903,6 +1076,37 @@ def settings():
             flash("Notification preferences updated.", "success")
             return redirect(url_for("main.settings"))
 
+    producer_payroll_preview: dict[str, object] | None = None
+    if current_user.role == "producer" and getattr(current_user, "producer", None):
+        producer_txn_query = CommissionTransaction.query.filter_by(
+            org_id=org.id, producer_id=current_user.producer.id
+        )
+        lifetime_commission = (
+            producer_txn_query.with_entities(
+                func.coalesce(func.sum(CommissionTransaction.amount), 0)
+            ).scalar()
+            or 0
+        )
+        recent_window_start = datetime.utcnow().date() - timedelta(days=90)
+        recent_commission = (
+            producer_txn_query.filter(
+                CommissionTransaction.txn_date >= recent_window_start
+            )
+            .with_entities(
+                func.coalesce(func.sum(CommissionTransaction.amount), 0)
+            )
+            .scalar()
+            or 0
+        )
+        monthly_average = float(recent_commission) / 3 if recent_commission else 0.0
+        producer_payroll_preview = {
+            "currency": current_user.compensation_currency or "USD",
+            "base_salary": float(current_user.base_salary or 0),
+            "lifetime_commission": float(lifetime_commission),
+            "recent_commission": float(recent_commission),
+            "monthly_average": monthly_average,
+        }
+
     usage_snapshot = {
         "users": User.query.filter_by(org_id=org.id).filter(User.status == "active").count(),
         "workspaces": Workspace.query.filter_by(org_id=org.id).count(),
@@ -957,6 +1161,7 @@ def settings():
         accessible_workspaces=accessible_workspaces,
         joinable_workspaces=joinable_workspaces,
         extra_seat_price=extra_seat_price,
+        producer_payroll_preview=producer_payroll_preview,
     )
 
 
